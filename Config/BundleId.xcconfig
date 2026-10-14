@@ -15,4 +15,8 @@ BUNDLE_ID_PREFIX = com.noopapp
 // no team at all. Set DEVELOPMENT_TEAM in BundleIdSecrets.xcconfig to run on a physical iPhone or
 // to stop Xcode from asking you to reselect a team after every `xcodegen generate`.
 DEVELOPMENT_TEAM =
+// Name shown under the icon of the iPhone app, its widgets and the watch app. Override it in
+// BundleIdSecrets.xcconfig to give a personal build its own name; the bundle id is unaffected,
+// so the installed app keeps its data.
+APP_DISPLAY_NAME = NOOP
 #include? "BundleIdSecrets.xcconfig"
