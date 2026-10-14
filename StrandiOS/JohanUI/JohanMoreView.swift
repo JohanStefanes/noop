@@ -48,7 +48,7 @@ struct JohanMoreView: View {
             (String(localized: "Strap & App"), [
                 Row(id: "alarms", title: String(localized: "Alarms"), icon: "alarm.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(SmartAlarmView())),
                 Row(id: "alarmLink", title: String(localized: "Alarm Vibration"), icon: "alarm.waves.left.and.right", tint: JohanTheme.recoveryYellow, destination: AnyView(JohanAlarmLinkView())),
-                Row(id: "devices", title: String(localized: "Devices"), icon: "applewatch", tint: Self.neutral, destination: AnyView(DevicesView())),
+                Row(id: "devices", title: String(localized: "Devices"), icon: JohanStrapGlyph.iconName, tint: Self.neutral, destination: AnyView(DevicesView())),
                 Row(id: "backup", title: "Backup & Sync", icon: "externaldrive.fill.badge.icloud", tint: Self.neutral, destination: AnyView(BackupSyncView())),
                 Row(id: "settings", title: String(localized: "Settings"), icon: "gearshape.fill", tint: Self.neutral, destination: AnyView(SettingsView()))
             ]),
@@ -209,9 +209,16 @@ struct JohanMoreView: View {
     }
 
     private func iconTile(_ icon: String, tint: Color) -> some View {
-        Image(systemName: icon)
-            .font(.system(.subheadline, weight: .semibold))
-            .foregroundStyle(tint)
+        Group {
+            if icon == JohanStrapGlyph.iconName {
+                JohanStrapGlyph(color: tint, lineWidth: max(1.3, tileSize * 0.05))
+                    .frame(width: tileSize * 0.74, height: tileSize * 0.74)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(.subheadline, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+        }
             .frame(width: tileSize, height: tileSize)
             // Tinted glyph on a faint wash of its own colour: quieter than a saturated tile per row.
             .background(RoundedRectangle(cornerRadius: tileSize * 0.27, style: .continuous).fill(tint.opacity(0.14)))

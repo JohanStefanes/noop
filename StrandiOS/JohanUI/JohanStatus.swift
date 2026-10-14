@@ -124,32 +124,77 @@ struct JohanBatteryRing: View {
                     .foregroundStyle(JohanTheme.textPrimary)
                     .minimumScaleFactor(0.6)
             } else {
-                JohanStrapGlyph()
-                    .stroke(connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
-                            style: StrokeStyle(lineWidth: max(1.5, size * 0.045), lineCap: .round, lineJoin: .round))
-                    .frame(width: size * 0.34, height: size * 0.5)
+                JohanStrapGlyph(color: connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
+                                lineWidth: max(1.2, size * 0.035))
+                    .frame(width: size * 0.56, height: size * 0.56)
             }
         }
         .frame(width: size, height: size)
     }
 }
 
-/// A generic wrist strap seen face-on: the sensor pod in the middle with the band running off above and
-/// below. Drawn rather than taken from an asset, so no vendor artwork ships with the app.
-struct JohanStrapGlyph: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let w = rect.width, h = rect.height
-        let pod = CGRect(x: rect.minX, y: rect.midY - h * 0.22, width: w, height: h * 0.44)
-        p.addRoundedRect(in: pod, cornerSize: CGSize(width: w * 0.28, height: w * 0.28))
-        let bandInset = w * 0.2
-        for (from, to) in [(pod.minY, rect.minY), (pod.maxY, rect.maxY)] {
-            p.move(to: CGPoint(x: rect.minX + bandInset, y: from))
-            p.addLine(to: CGPoint(x: rect.minX + bandInset, y: to))
-            p.move(to: CGPoint(x: rect.maxX - bandInset, y: from))
-            p.addLine(to: CGPoint(x: rect.maxX - bandInset, y: to))
+/// A generic wrist strap in a cartoon three-quarter view: the sensor pod (with its depth, a clasp plate and
+/// a side button) in front of the band's loop, drawn in the line style of the SF Symbols around it. Drawn
+/// rather than taken from an asset, so no vendor artwork or logo ships with the app.
+struct JohanStrapGlyph: View {
+    /// Stands in for an SF Symbol name where a row takes one (the More tab's Devices row).
+    static let iconName = "johan.strap"
+
+    var color: Color
+    var lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { gc, size in
+            let s = min(size.width, size.height) / 100
+            gc.translateBy(x: (size.width - 100 * s) / 2, y: (size.height - 100 * s) / 2)
+            gc.scaleBy(x: s, y: s)
+            let lw = lineWidth / s
+            let stroke = StrokeStyle(lineWidth: lw, lineCap: .round, lineJoin: .round)
+            func ellipse(_ c: CGPoint, _ rx: CGFloat, _ ry: CGFloat, _ deg: Double) -> Path {
+                Path(ellipseIn: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2))
+                    .applying(CGAffineTransform(rotationAngle: deg * .pi / 180).concatenating(.init(translationX: c.x, y: c.y)))
+            }
+            func rounded(_ r: CGRect, _ corner: CGFloat, _ deg: Double) -> Path {
+                let c = CGPoint(x: r.midX, y: r.midY)
+                return Path(roundedRect: r.offsetBy(dx: -c.x, dy: -c.y), cornerRadius: corner, style: .continuous)
+                    .applying(CGAffineTransform(rotationAngle: deg * .pi / 180).concatenating(.init(translationX: c.x, y: c.y)))
+            }
+            // Band: a thick loop seen at three-quarters, wider on the far side.
+            let outer = ellipse(CGPoint(x: 59, y: 51), 37, 43, -12)
+            let inner = ellipse(CGPoint(x: 63, y: 52), 26, 34, -12)
+            var band = outer; band.addPath(inner)
+            gc.fill(band, with: .color(color.opacity(0.22)), style: FillStyle(eoFill: true))
+            gc.stroke(outer, with: .color(color), style: stroke)
+            gc.stroke(inner, with: .color(color), style: stroke)
+            // Pod: its depth first (offset copy), then the face, each clearing the band beneath it.
+            let tilt = -9.0
+            let face = CGRect(x: 9, y: 11, width: 38, height: 78)
+            let depth = rounded(face.offsetBy(dx: 6, dy: 2), 14, tilt)
+            let front = rounded(face, 14, tilt)
+            for p in [depth, front] {
+                gc.blendMode = .clear
+                gc.fill(p, with: .color(.black))
+                gc.blendMode = .normal
+                gc.fill(p, with: .color(color.opacity(p == depth ? 0.30 : 0.12)))
+                gc.stroke(p, with: .color(color), style: stroke)
+            }
+            // Clasp plate across the bottom of the face, and the side button on the depth edge.
+            let rot = CGAffineTransform(rotationAngle: tilt * .pi / 180)
+            let fc = CGPoint(x: face.midX, y: face.midY)
+            func onFace(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: x - fc.x, y: y - fc.y).applying(rot).applying(.init(translationX: fc.x, y: fc.y))
+            }
+            var plate = Path()
+            plate.move(to: onFace(face.minX + 1, 68)); plate.addLine(to: onFace(face.maxX - 1, 68))
+            gc.stroke(plate, with: .color(color), style: stroke)
+            var dot = Path()
+            dot.move(to: onFace(face.midX - 4, 78)); dot.addLine(to: onFace(face.midX + 4, 78))
+            gc.stroke(dot, with: .color(color.opacity(0.7)), style: stroke)
+            var button = Path()
+            button.move(to: onFace(face.maxX + 6, 34)); button.addLine(to: onFace(face.maxX + 6, 46))
+            gc.stroke(button, with: .color(color), style: StrokeStyle(lineWidth: lw * 1.5, lineCap: .round))
         }
-        return p
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 
@@ -331,7 +376,10 @@ struct JohanStrapView: View {
 
     private var manageButton: some View {
         Button { router.openDevices() } label: {
-            HStack {
+            HStack(spacing: 12) {
+                JohanStrapGlyph(color: JohanTheme.textSecondary, lineWidth: 1.6)
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
                 Text("Manage devices")
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
@@ -433,10 +481,9 @@ struct JohanBatteryOrb: View {
                     .opacity(progress > 0.02 ? 1 : 0)
                 centre(battery)
             } else {
-                JohanStrapGlyph()
-                    .stroke(connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
-                            style: StrokeStyle(lineWidth: max(1.5, size * 0.03), lineCap: .round, lineJoin: .round))
-                    .frame(width: size * 0.22, height: size * 0.34)
+                JohanStrapGlyph(color: connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
+                                lineWidth: max(1.5, size * 0.022))
+                    .frame(width: size * 0.42, height: size * 0.42)
             }
         }
         .frame(width: size, height: size)
