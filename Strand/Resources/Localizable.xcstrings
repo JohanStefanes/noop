@@ -1,6 +1,16 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Very low · charge now": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Very low · charge now"}}, "de": {"stringUnit": {"state": "translated", "value": "Sehr schwach · jetzt laden"}}}},
+    "Low · charge soon": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Low · charge soon"}}, "de": {"stringUnit": {"state": "translated", "value": "Schwach · bald laden"}}}},
+    "Good charge": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Good charge"}}, "de": {"stringUnit": {"state": "translated", "value": "Gut geladen"}}}},
+    "Fully charged": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Fully charged"}}, "de": {"stringUnit": {"state": "translated", "value": "Voll geladen"}}}},
+    "Runtime": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Runtime"}}, "de": {"stringUnit": {"state": "translated", "value": "Laufzeit"}}}},
+    "From your recent drain": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "From your recent drain"}}, "de": {"stringUnit": {"state": "translated", "value": "Aus deinem aktuellen Verbrauch"}}}},
+    "From rated capacity": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "From rated capacity"}}, "de": {"stringUnit": {"state": "translated", "value": "Aus der Nennkapazität"}}}},
+    "Empty around %@": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Empty around %@"}}, "de": {"stringUnit": {"state": "translated", "value": "Leer etwa %@"}}}},
+    "Full charge ≈ %lld d": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Full charge ≈ %lld d"}}, "de": {"stringUnit": {"state": "translated", "value": "Volle Ladung ≈ %lld T"}}}},
+    "%lld %%": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%lld %%"}}, "de": {"stringUnit": {"state": "translated", "value": "%lld %%"}}}},
     "MG vs Watch": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "MG vs Watch"}}, "de": {"stringUnit": {"state": "translated", "value": "MG vs. Watch"}}}},
     "The Watch measures HRV as SDNN over about a minute, a few times a night. Each reading is compared with the strap's SDNN over the same minute, not with its overnight RMSSD.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The Watch measures HRV as SDNN over about a minute, a few times a night. Each reading is compared with the strap's SDNN over the same minute, not with its overnight RMSSD."}}, "de": {"stringUnit": {"state": "translated", "value": "Die Watch misst HRV als SDNN über etwa eine Minute, ein paar Mal pro Nacht. Jede Messung wird mit der SDNN des Bands in derselben Minute verglichen, nicht mit seinem nächtlichen RMSSD."}}}},
     "%lld of %lld nights with both": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%lld of %lld nights with both"}}, "de": {"stringUnit": {"state": "translated", "value": "%lld von %lld Nächten mit beiden"}}}},

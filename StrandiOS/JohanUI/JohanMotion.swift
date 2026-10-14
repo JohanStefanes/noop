@@ -30,6 +30,9 @@ extension JohanTheme {
         static let sparkDraw = Animation.easeOut(duration: 1.1)
         // Calibration
         static let ringFill = Animation.spring(response: 0.9, dampingFraction: 0.8)
+        // Strap battery: the liquid lands with a slosh, the runtime cells fill one after another.
+        static let liquidFill = Animation.spring(response: 1.3, dampingFraction: 0.6)
+        static let cellStagger: Double = 0.07
         // Strain gauge
         static let markerSpring = Animation.spring(response: 0.6, dampingFraction: 0.58)
         static let markerDelay: Double = 0.4

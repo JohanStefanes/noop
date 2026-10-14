@@ -31,9 +31,42 @@ struct JohanStrapFacts {
 
     func batteryColor(_ pct: Double) -> Color {
         if charging { return JohanTheme.recoveryGreen }
-        if pct < 15 { return JohanTheme.recoveryRed }
-        if pct < 30 { return JohanTheme.recoveryYellow }
-        return JohanTheme.textPrimary
+        switch level(pct) {
+        case .critical: return JohanTheme.recoveryRed
+        case .low: return JohanTheme.recoveryYellow
+        case .good, .full: return JohanTheme.recoveryGreen
+        }
+    }
+
+    /// What a charge means, on the same 15 / 30 cut-offs as `batteryColor`, so the pill's word and the
+    /// ring's colour cannot disagree.
+    enum Level {
+        case critical, low, good, full
+
+        var text: String {
+            switch self {
+            case .critical: return String(localized: "Very low · charge now")
+            case .low: return String(localized: "Low · charge soon")
+            case .good: return String(localized: "Good charge")
+            case .full: return String(localized: "Fully charged")
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .critical: return "battery.0percent"
+            case .low: return "battery.25percent"
+            case .good: return "battery.75percent"
+            case .full: return "battery.100percent"
+            }
+        }
+    }
+
+    func level(_ pct: Double) -> Level {
+        if pct < 15 { return .critical }
+        if pct < 30 { return .low }
+        if pct >= 95 { return .full }
+        return .good
     }
 
     var connectionText: String { live.connected ? String(localized: "Connected") : String(localized: "Not connected") }
@@ -164,11 +197,16 @@ struct JohanStrapChip: View {
     }
 }
 
-/// Strap page opened from the Home header: battery, connection, sync and the strap's identity, each
-/// fact through `JohanStrapFacts`. Device management itself stays on the original Devices screen.
+/// Strap page opened from the Home header: battery, runtime, connection, sync and the strap's identity,
+/// each fact through `JohanStrapFacts`. Device management itself stays on the original Devices screen.
+///
+/// Each fact is shown once: the charge is the number in the orb, the runtime estimate lives only in the
+/// runtime card, so no headline repeats either of them.
 struct JohanStrapView: View {
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var router: NavRouter
+    /// Bumped by a tap on the orb: the arc, the liquid and the number run their entrance again.
+    @State private var replay = 0
 
     var body: some View {
         let facts = JohanStrapFacts(live: live)
@@ -176,9 +214,14 @@ struct JohanStrapView: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 VStack(spacing: JohanTheme.Metrics.cardSpacing) {
                     batteryHero(facts).johanStagger(0)
-                    statusCard(facts, now: context.date).johanStagger(1)
-                    if live.connected { detailsCard.johanStagger(2) }
-                    manageButton.johanStagger(3)
+                    if let pct = facts.battery, let est = facts.estimate, !facts.charging {
+                        JohanRuntimeCard(estimate: est, battery: pct, tint: facts.batteryColor(pct),
+                                         now: context.date)
+                            .johanStagger(1)
+                    }
+                    statusCard(facts, now: context.date).johanStagger(2)
+                    if live.connected { detailsCard.johanStagger(3) }
+                    manageButton.johanStagger(4)
                 }
             }
         }
@@ -188,36 +231,40 @@ struct JohanStrapView: View {
     // MARK: Battery
 
     private func batteryHero(_ facts: JohanStrapFacts) -> some View {
-        VStack(spacing: 14) {
-            JohanBatteryRing(facts: facts, size: 150, lineWidth: 12)
-            Text(batteryHeadline(facts))
-                .font(JohanTheme.Fonts.title)
-                .foregroundStyle(JohanTheme.textPrimary)
+        let tint = facts.battery.map(facts.batteryColor) ?? JohanTheme.textTertiary
+        return VStack(spacing: 18) {
+            ZStack {
+                if facts.battery != nil { JohanAmbientGlow(color: tint, size: 300) }
+                JohanBatteryOrb(battery: facts.battery, connected: facts.connected, charging: facts.charging,
+                                tint: tint, replay: replay, size: 220)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 236)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard facts.battery != nil else { return }
+                StrandHaptic.selection.play()
+                replay += 1
+            }
+            if let pct = facts.battery {
+                JohanBatteryBadge(level: facts.level(pct), charging: facts.charging, tint: tint)
+            } else {
+                VStack(spacing: 6) {
+                    Text(facts.connected ? String(localized: "Waiting for battery reading")
+                                         : String(localized: "Not connected"))
+                        .font(JohanTheme.Fonts.title)
+                        .foregroundStyle(JohanTheme.textPrimary)
+                    if !facts.connected {
+                        Text("Battery and sync appear once the strap is in range.")
+                            .font(.system(.subheadline))
+                            .foregroundStyle(JohanTheme.textSecondary)
+                    }
+                }
                 .multilineTextAlignment(.center)
-            if let sub = batterySubline(facts) {
-                Text(sub)
-                    .font(.system(.subheadline))
-                    .foregroundStyle(JohanTheme.textSecondary)
-                    .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-    }
-
-    private func batteryHeadline(_ facts: JohanStrapFacts) -> String {
-        if !facts.connected { return String(localized: "Not connected") }
-        guard let pct = facts.battery else { return String(localized: "Waiting for battery reading") }
-        if facts.charging { return String(localized: "Charging · \(Int(pct.rounded())) %") }
-        return String(localized: "Battery \(Int(pct.rounded())) %")
-    }
-
-    private func batterySubline(_ facts: JohanStrapFacts) -> String? {
-        if !facts.connected { return String(localized: "Battery and sync appear once the strap is in range.") }
-        guard !facts.charging, let est = facts.estimate else { return nil }
-        let hours = est.remainingHours
-        if hours < 24 { return String(localized: "About \(Int(hours.rounded())) h left") }
-        return String(localized: "About \(Int((hours / 24).rounded())) days left")
+        .padding(.vertical, 8)
     }
 
     // MARK: Status
@@ -226,25 +273,34 @@ struct JohanStrapView: View {
         JohanCard(padding: 0) {
             VStack(spacing: 0) {
                 row(String(localized: "Connection"), "dot.radiowaves.left.and.right") {
-                    HStack(spacing: 6) {
-                        Circle().fill(facts.statusColor).frame(width: 7, height: 7)
-                        Text(facts.connectionText)
+                    HStack(spacing: 8) {
+                        JohanLiveDot(color: facts.statusColor, pulsing: facts.connected)
+                        Text(facts.connectionText).contentTransition(.opacity)
                     }
                 }
                 if live.connected {
                     divider
-                    row(String(localized: "Wear"), "hand.raised") {
+                    row(String(localized: "Wear"), live.worn ? "hand.raised.fill" : "hand.raised") {
                         Text(live.worn ? String(localized: "On wrist") : String(localized: "Off wrist"))
+                            .contentTransition(.opacity)
                     }
                     if let hr = live.heartRate {
                         divider
-                        row(String(localized: "Heart rate"), "heart.fill") { Text("\(hr) bpm") }
+                        row(String(localized: "Heart rate"), icon: { JohanPulsingHeart(bpm: hr, size: 15) }) {
+                            Text("\(hr) bpm")
+                                .contentTransition(.numericText(value: Double(hr)))
+                                .animation(.snappy, value: hr)
+                        }
                     }
                 }
                 divider
-                row(String(localized: "Last sync"), "arrow.triangle.2.circlepath") {
+                row(String(localized: "Last sync"), icon: {
+                    JohanSyncGlyph(syncing: live.backfilling, lastSyncedAt: live.lastSyncedAt)
+                }) {
                     if let sync = facts.syncText(now: now) {
-                        Text(sync.text).foregroundStyle(sync.isProblem ? JohanTheme.recoveryYellow : JohanTheme.textSecondary)
+                        Text(sync.text)
+                            .foregroundStyle(sync.isProblem ? JohanTheme.recoveryYellow : JohanTheme.textSecondary)
+                            .contentTransition(.opacity)
                     } else {
                         Text("–")
                     }
@@ -258,8 +314,10 @@ struct JohanStrapView: View {
     private var detailsCard: some View {
         JohanCard(padding: 0) {
             VStack(spacing: 0) {
-                row(String(localized: "Name"), "tag") { Text(live.advertisingName ?? "–") }
-                divider
+                if let name = live.advertisingName {
+                    row(String(localized: "Name"), "tag") { Text(name) }
+                    divider
+                }
                 row(String(localized: "Firmware"), "cpu") { Text(live.strapFirmware ?? "–") }
                 if let mv = live.batteryMv, live.activeIsWhoop {
                     divider
@@ -283,7 +341,12 @@ struct JohanStrapView: View {
             .foregroundStyle(JohanTheme.textPrimary)
             .padding(.horizontal, 16)
             .frame(minHeight: 52)
-            .background(RoundedRectangle(cornerRadius: JohanTheme.Metrics.cardRadius, style: .continuous).fill(JohanTheme.card))
+            .background(
+                RoundedRectangle(cornerRadius: JohanTheme.Metrics.cardRadius, style: .continuous)
+                    .fill(JohanTheme.card)
+                    .overlay(RoundedRectangle(cornerRadius: JohanTheme.Metrics.cardRadius, style: .continuous)
+                        .strokeBorder(JohanTheme.cardBorder, lineWidth: 0.5))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(JohanPressStyle())
@@ -296,10 +359,18 @@ struct JohanStrapView: View {
     }
 
     private func row<Value: View>(_ title: String, _ icon: String, @ViewBuilder value: () -> Value) -> some View {
-        HStack(spacing: 12) {
+        row(title, icon: {
             Image(systemName: icon)
                 .font(.system(.subheadline, weight: .semibold))
                 .foregroundStyle(JohanTheme.textSecondary)
+                .contentTransition(.symbolEffect(.replace))
+        }, value: value)
+    }
+
+    private func row<Icon: View, Value: View>(_ title: String, @ViewBuilder icon: () -> Icon,
+                                              @ViewBuilder value: () -> Value) -> some View {
+        HStack(spacing: 12) {
+            icon()
                 .frame(width: 24)
                 .accessibilityHidden(true)
             Text(title).foregroundStyle(JohanTheme.textPrimary)
@@ -310,6 +381,322 @@ struct JohanStrapView: View {
         .padding(.horizontal, 16)
         .frame(minHeight: 50)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Battery orb
+
+/// The strap page's battery hero: a ring whose arc sweeps to the charge with a glowing tip, and inside it
+/// a liquid that fills to the same level, sloshes as it lands and keeps a slow wave going. While charging,
+/// bubbles rise through the liquid and the wave runs faster. A new `replay` value empties and refills it.
+/// With no reading, the ring is an empty track around the strap glyph.
+struct JohanBatteryOrb: View {
+    let battery: Double?
+    let connected: Bool
+    let charging: Bool
+    let tint: Color
+    let replay: Int
+    let size: CGFloat
+
+    @State private var progress = 0.0
+    @State private var fill = 0.0
+    @State private var lastReplay: Int?
+    private let motion = JohanStill()
+
+    private struct SweepKey: Equatable { let replay: Int; let target: Double? }
+
+    var body: some View {
+        let lw = size * 0.055
+        let ringRadius = (size - lw) / 2
+        let liquidDiameter = size - lw * 2 - size * 0.07
+        ZStack {
+            Circle().stroke(JohanTheme.track, lineWidth: lw)
+            if let battery {
+                Circle()
+                    .fill(tint.opacity(0.06))
+                    .frame(width: liquidDiameter, height: liquidDiameter)
+                liquid(diameter: liquidDiameter)
+                Circle()
+                    .trim(from: 0, to: max(0.001, progress))
+                    .stroke(AngularGradient(colors: [tint.opacity(0.35), tint], center: .center),
+                            style: StrokeStyle(lineWidth: lw, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .opacity(progress > 0.001 ? 1 : 0)
+                // The tip: a bright bead riding the end of the arc.
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: lw * 0.42, height: lw * 0.42)
+                    .shadow(color: tint, radius: 6)
+                    .shadow(color: tint.opacity(0.8), radius: 14)
+                    .offset(y: -ringRadius)
+                    .rotationEffect(.degrees(360 * progress))
+                    .opacity(progress > 0.02 ? 1 : 0)
+                centre(battery)
+            } else {
+                JohanStrapGlyph()
+                    .stroke(connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
+                            style: StrokeStyle(lineWidth: max(1.5, size * 0.03), lineCap: .round, lineJoin: .round))
+                    .frame(width: size * 0.22, height: size * 0.34)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Battery"))
+        .accessibilityValue(Text(accessibilityValue))
+        .task(id: SweepKey(replay: replay, target: battery)) { await sweep() }
+    }
+
+    private var accessibilityValue: String {
+        guard let battery else { return String(localized: "no value") }
+        let pct = String(localized: "\(Int(battery.rounded())) %")
+        return charging ? pct + ", " + String(localized: "Charging") : pct
+    }
+
+    private func centre(_ battery: Double) -> some View {
+        VStack(spacing: 0) {
+            if charging {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: size * 0.09, weight: .bold))
+                    .foregroundStyle(tint)
+                    .symbolEffect(.pulse, isActive: !motion.isStill)
+                    .transition(.scale.combined(with: .opacity))
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                CountUpText(value: battery, format: { "\(Int($0.rounded()))" },
+                            font: JohanTheme.number(size * 0.30),
+                            color: JohanTheme.textPrimary,
+                            animation: JohanTheme.Motion.countUp)
+                    .id(replay)
+                Text("%")
+                    .font(JohanTheme.number(size * 0.11))
+                    .foregroundStyle(JohanTheme.textSecondary)
+            }
+            .shadow(color: .black.opacity(0.35), radius: 6)
+        }
+        .animation(JohanTheme.Motion.cardIn, value: charging)
+    }
+
+    /// Two offset sine waves (and, while charging, rising bubbles) drawn per frame. The wave drawing sits
+    /// at the top of a slightly taller canvas, and the canvas is slid down by the unfilled share, so the
+    /// level itself is an ordinary animatable offset that springs independently of the wave's phase.
+    private func liquid(diameter d: CGFloat) -> some View {
+        let amp = d * 0.032
+        let charging = charging
+        let tint = tint
+        return TimelineView(.animation(paused: motion.isStill)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            Canvas { gc, sz in
+                let speed = charging ? 2.6 : 1.0
+                let back = Self.wave(sz, surface: amp, amp: amp * 0.8, cycles: 1.4, phase: t * 1.7 * speed)
+                gc.fill(back, with: .color(tint.opacity(0.16)))
+                let front = Self.wave(sz, surface: amp, amp: amp, cycles: 1.0, phase: -t * 1.15 * speed + 1.3)
+                gc.fill(front, with: .linearGradient(
+                    Gradient(colors: [tint.opacity(0.42), tint.opacity(0.14)]),
+                    startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: sz.height)))
+                guard charging else { return }
+                for i in 0..<8 {
+                    let seed = Double(i)
+                    let period = 2.0 + Self.hash(seed * 3.1) * 1.6
+                    let rise = (t / period + seed / 8).truncatingRemainder(dividingBy: 1)
+                    let r = 1.6 + Self.hash(seed * 7.7) * 2.6
+                    let x = sz.width * (0.18 + 0.64 * Self.hash(seed)) + sin(t * 2.2 + seed) * 4
+                    let y = sz.height - rise * (sz.height - amp * 2)
+                    let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
+                    gc.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.55 * (1 - rise))))
+                }
+            }
+        }
+        .frame(width: d, height: d + amp * 2)
+        .offset(y: (1 - fill) * d - amp)
+        .frame(width: d, height: d, alignment: .top)
+        .clipShape(Circle())
+        .allowsHitTesting(false)
+    }
+
+    private static func wave(_ sz: CGSize, surface: CGFloat, amp: CGFloat, cycles: Double, phase: Double) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: sz.height))
+        for x in stride(from: 0, through: sz.width, by: 2) {
+            let rel = Double(x / sz.width)
+            p.addLine(to: CGPoint(x: x, y: surface + amp * CGFloat(sin(rel * 2 * .pi * cycles + phase))))
+        }
+        p.addLine(to: CGPoint(x: sz.width, y: sz.height))
+        p.closeSubpath()
+        return p
+    }
+
+    /// Deterministic 0..<1 noise, so each bubble keeps its own lane, size and pace across frames.
+    private static func hash(_ v: Double) -> Double {
+        let s = sin(v * 12.9898 + 78.233) * 43758.5453
+        return s - s.rounded(.down)
+    }
+
+    @MainActor private func sweep() async {
+        let target = max(0, min(1, (battery ?? 0) / 100))
+        if motion.isStill { progress = target; fill = target; lastReplay = replay; return }
+        if lastReplay != replay {
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) { progress = 0; fill = 0 }
+            lastReplay = replay
+        }
+        let from = progress
+        withAnimation(JohanTheme.Motion.dialSweep) { progress = target }
+        withAnimation(JohanTheme.Motion.liquidFill) { fill = target }
+        guard battery != nil, abs(target - from) > 0.05 else { return }
+        try? await Task.sleep(for: .seconds(JohanTheme.Motion.dialSettle))
+        if !Task.isCancelled { StrandHaptic.light.play() }
+    }
+}
+
+/// The one-line verdict under the orb: what the charge means (or that it is charging) in a tinted pill.
+struct JohanBatteryBadge: View {
+    let level: JohanStrapFacts.Level
+    let charging: Bool
+    let tint: Color
+    private let motion = JohanStill()
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: charging ? "bolt.fill" : level.symbol)
+                .font(.system(.subheadline, weight: .semibold))
+                .symbolEffect(.pulse, isActive: charging && !motion.isStill)
+                .contentTransition(.symbolEffect(.replace))
+            Text(charging ? String(localized: "Charging") : level.text)
+                .font(.system(.subheadline, weight: .semibold))
+                .contentTransition(.opacity)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(tint.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.28), lineWidth: 0.5))
+        .animation(JohanTheme.Motion.cardIn, value: charging)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Runtime
+
+/// Runtime left as a row of day cells: one cell per day a full charge lasts at the current drain, lit up to
+/// the days that remain, the last one partly. The cells fill one after another on appear.
+struct JohanRuntimeCard: View {
+    let estimate: BatteryEstimator.Estimate
+    let battery: Double
+    let tint: Color
+    let now: Date
+
+    @State private var shown = false
+    private let motion = JohanStill()
+
+    var body: some View {
+        let hours = estimate.remainingHours
+        let fullDays = hours / max(0.05, battery / 100) / 24
+        let cells = max(1, min(10, Int(fullDays.rounded(.up))))
+        let litDays = hours / 24
+        JohanCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    JohanOverline(String(localized: "Runtime"))
+                    Spacer()
+                    Text(estimate.source == .measured ? String(localized: "From your recent drain")
+                                                      : String(localized: "From rated capacity"))
+                        .font(JohanTheme.Fonts.caption)
+                        .foregroundStyle(JohanTheme.textTertiary)
+                }
+                Text(Self.remainingText(hours))
+                    .font(.system(.title2, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JohanTheme.textPrimary)
+                HStack(spacing: 5) {
+                    ForEach(0..<cells, id: \.self) { i in
+                        let lit = max(0, min(1, litDays - Double(i)))
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(JohanTheme.track)
+                                Capsule()
+                                    .fill(tint)
+                                    .frame(width: g.size.width * (shown ? lit : 0))
+                                    .shadow(color: tint.opacity(shown && lit > 0 ? 0.6 : 0), radius: 4)
+                            }
+                        }
+                        .frame(height: 10)
+                        .animation(motion.isStill ? nil
+                                   : JohanTheme.Motion.cardIn.delay(0.3 + Double(i) * JohanTheme.Motion.cellStagger),
+                                   value: shown)
+                    }
+                }
+                .accessibilityHidden(true)
+                HStack {
+                    Text(String(localized: "Empty around \(now.addingTimeInterval(hours * 3600).formatted(Self.emptyFormat))"))
+                    Spacer(minLength: 8)
+                    Text(String(localized: "Full charge ≈ \(Int(fullDays.rounded())) d"))
+                }
+                .font(JohanTheme.Fonts.body)
+                .foregroundStyle(JohanTheme.textSecondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .onAppear { shown = true }
+    }
+
+    static func remainingText(_ hours: Double) -> String {
+        if hours < 24 { return String(localized: "About \(Int(hours.rounded())) h left") }
+        return String(localized: "About \(Int((hours / 24).rounded())) days left")
+    }
+
+    private static var emptyFormat: Date.FormatStyle {
+        Date.FormatStyle(locale: AppLanguage.activeLocale).weekday(.wide).hour()
+    }
+}
+
+// MARK: - Small live glyphs
+
+/// Status dot with a sonar ping while `pulsing` (the link is up). Static under the motion gate.
+struct JohanLiveDot: View {
+    let color: Color
+    let pulsing: Bool
+    @State private var ping = false
+    private let motion = JohanStill()
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 8, height: 8)
+            .background(
+                Circle()
+                    .stroke(color, lineWidth: 1.5)
+                    .scaleEffect(ping ? 2.8 : 1)
+                    .opacity(ping ? 0 : 0.7)
+            )
+            .animation(.easeInOut(duration: 0.3), value: color)
+            .task(id: pulsing && !motion.isStill) {
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { ping = false }
+                guard pulsing, !motion.isStill else { return }
+                try? await Task.sleep(for: .milliseconds(400))
+                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { ping = true }
+            }
+    }
+}
+
+/// Sync arrows that spin while an offload runs and bounce once each time a sync lands.
+struct JohanSyncGlyph: View {
+    let syncing: Bool
+    let lastSyncedAt: Double?
+    @State private var spin = false
+    private let motion = JohanStill()
+
+    var body: some View {
+        Image(systemName: "arrow.triangle.2.circlepath")
+            .font(.system(.subheadline, weight: .semibold))
+            .foregroundStyle(syncing ? JohanTheme.strainBlue : JohanTheme.textSecondary)
+            .rotationEffect(.degrees(spin ? 360 : 0))
+            .symbolEffect(.bounce, value: motion.isStill ? nil : lastSyncedAt)
+            .task(id: syncing && !motion.isStill) {
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { spin = false }
+                guard syncing, !motion.isStill else { return }
+                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { spin = true }
+            }
     }
 }
 #endif
