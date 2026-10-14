@@ -2,7 +2,7 @@
 import SwiftUI
 import StrandDesign
 
-// JohanDayPicker.swift — how Home moves between days: a week strip of mini rings under the title, a
+// JohanDayPicker.swift — how Home moves between days: a week strip of dates under the title, a
 // month calendar behind the title, and a "Today" pill to come back. Every day is addressed by its offset
 // from today (0 = today, 1 = yesterday), the same coordinate `JohanHomeModel.dayOffset` uses, and every
 // date goes through `JohanHomeModel.dayDate(offset:)`, so the strip, the calendar and the content cannot
@@ -71,52 +71,10 @@ struct JohanDayMath {
     }
 }
 
-// MARK: - Mini rings
-
-/// The Home rings in miniature: recovery (in its zone colour), sleep and strain, drawn in on appear and
-/// gliding when a value changes. Empty tracks only on a day without data.
-struct JohanMiniRings: View {
-    let rings: JohanHomeModel.DayRings
-    var size: CGFloat = 30
-    @State private var drawn = false
-    private let motion = JohanStill()
-
-    var body: some View {
-        let lw = size * 0.12
-        let gap = size * 0.03
-        let entries: [(Double?, Color)] = [
-            (rings.recovery.map { $0 / 100 }, rings.recovery.map { JohanTheme.RecoveryZone($0).color } ?? JohanTheme.recoveryGreen),
-            (rings.sleepPct.map { $0 / 100 }, JohanTheme.sleepViolet),
-            (rings.strain21.map { $0 / 21 }, JohanTheme.strainBlue),
-        ]
-        ZStack {
-            ForEach(entries.indices, id: \.self) { i in
-                let d = size - CGFloat(i) * 2 * (lw + gap) - lw
-                let fraction = min(1, max(0, entries[i].0 ?? 0))
-                Circle()
-                    .stroke(entries[i].1.opacity(rings.isEmpty ? 0.10 : 0.2), lineWidth: lw)
-                    .frame(width: d, height: d)
-                Circle()
-                    .trim(from: 0, to: drawn ? max(0.0001, fraction) : 0.0001)
-                    .stroke(entries[i].1, style: StrokeStyle(lineWidth: lw, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: d, height: d)
-                    .opacity(fraction > 0.001 ? 1 : 0)
-                    .animation(motion.isStill ? nil : .spring(response: 0.9, dampingFraction: 0.82)
-                        .delay(drawn ? 0 : 0.15 + Double(i) * 0.08), value: drawn)
-                    .animation(motion.isStill ? nil : .spring(response: 0.6, dampingFraction: 0.85), value: fraction)
-            }
-        }
-        .frame(width: size, height: size)
-        .onAppear { drawn = true }
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Week strip
 
-/// Seven days under the Home title, each a mini ring set over its date. A highlight glides to the chosen
-/// day; swiping the strip pages whole weeks (browsing does not change the day, a tap does). The strip
+/// Seven days under the Home title: the date, and a dot in the day's recovery colour. A filled circle
+/// glides to the chosen day; swiping the strip pages whole weeks (browsing does not change the day, a tap does). The strip
 /// follows the content: a swipe or a calendar pick that leaves the visible week brings that week in.
 struct JohanWeekStrip: View {
     @ObservedObject var model: JohanHomeModel
@@ -136,7 +94,7 @@ struct JohanWeekStrip: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 78)
+        .frame(height: 66)
         .onAppear { page = math.weeksBack(ofOffset: model.dayOffset) }
         .onChange(of: model.dayOffset) { _, offset in
             let target = math.weeksBack(ofOffset: offset)
@@ -166,38 +124,30 @@ struct JohanWeekStrip: View {
             guard available, !selected else { return }
             onSelect(offset)
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 6) {
                 Text(date.formatted(.dateTime.weekday(.narrow).locale(AppLanguage.activeLocale)))
                     .font(.system(.caption2, weight: .semibold))
-                    .foregroundStyle(isToday ? JohanTheme.textPrimary : JohanTheme.textTertiary)
-                JohanMiniRings(rings: available ? rings : .init(), size: 30)
-                    .opacity(available ? 1 : 0.35)
+                    .foregroundStyle(JohanTheme.textTertiary)
                 Text(math.dayNumber(date))
-                    .font(.system(.caption, design: .rounded, weight: selected || isToday ? .bold : .medium))
+                    .font(.system(.callout, design: .rounded, weight: selected || isToday ? .bold : .medium))
                     .monospacedDigit()
                     .foregroundStyle(selected ? JohanTheme.background
-                                     : available ? JohanTheme.textPrimary : JohanTheme.textTertiary)
-                    .frame(minWidth: 22, minHeight: 18)
+                                     : available ? JohanTheme.textPrimary : JohanTheme.textTertiary.opacity(0.6))
+                    .frame(width: 34, height: 34)
                     .background {
                         if selected {
-                            Capsule().fill(JohanTheme.textPrimary)
+                            Circle().fill(JohanTheme.textPrimary)
                                 .matchedGeometryEffect(id: "pill", in: selection)
                         } else if isToday {
-                            Capsule().strokeBorder(JohanTheme.textSecondary, lineWidth: 1)
+                            Circle().strokeBorder(JohanTheme.textTertiary, lineWidth: 1)
                         }
                     }
+                // One signal per day: the recovery zone, nothing where there is no score.
+                Circle()
+                    .fill(available ? rings.recovery.map { JohanTheme.RecoveryZone($0).color } ?? .clear : .clear)
+                    .frame(width: 5, height: 5)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(JohanTheme.card)
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(JohanTheme.cardBorder, lineWidth: 0.5))
-                        .matchedGeometryEffect(id: "card", in: selection)
-                }
-            }
             .contentShape(Rectangle())
         }
         .buttonStyle(JohanPressStyle())

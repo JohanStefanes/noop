@@ -87,7 +87,7 @@ struct JohanHomeView: View {
     // MARK: Header
 
     /// The day at the top: the date over a large title (tap it for the month calendar), a "Today" pill once
-    /// the day is not today, the strap chip trailing, and the week strip of mini rings underneath.
+    /// the day is not today, the strap chip trailing, and the week strip underneath.
     private var header: some View {
         let maxOffset = model.maxOffset(repo: repo)
         return VStack(alignment: .leading, spacing: 10) {
