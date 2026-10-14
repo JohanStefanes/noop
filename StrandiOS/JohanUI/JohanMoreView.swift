@@ -42,7 +42,8 @@ struct JohanMoreView: View {
                 Row(id: "trends", title: "Trends", icon: "chart.line.uptrend.xyaxis", tint: JohanTheme.strainBlue, destination: AnyView(TrendsView())),
                 Row(id: "coach", title: "Coach", icon: "sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(CoachView())),
                 Row(id: "insights", title: String(localized: "Journal & Insights"), icon: "lightbulb.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(InsightsView())),
-                Row(id: "hub", title: String(localized: "What Moves You"), icon: "wand.and.sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(InsightsHubView()))
+                Row(id: "hub", title: String(localized: "What Moves You"), icon: "wand.and.sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(InsightsHubView())),
+                Row(id: "watchCompare", title: String(localized: "MG vs Watch"), icon: "applewatch", tint: JohanTheme.strainBlue, destination: AnyView(JohanWatchCompareView()))
             ]),
             (String(localized: "Strap & App"), [
                 Row(id: "alarms", title: String(localized: "Alarms"), icon: "alarm.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(SmartAlarmView())),
