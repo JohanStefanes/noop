@@ -14,6 +14,7 @@ struct JohanHomeView: View {
     @StateObject private var model = JohanHomeModel()
     @Environment(\.johanSelectTab) private var selectTab
     @State private var showRecoveryDetail = false
+    @State private var showCalendar = false
     private let motion = JohanStill()
 
     /// True when the visible day was reached by going back in time (content enters from the leading edge).
@@ -64,7 +65,13 @@ struct JohanHomeView: View {
             }
         }
         .task(id: model.dayOffset) { await model.load(repo: repo, profile: profile) }
-        .onReceive(repo.$days.dropFirst()) { _ in Task { await model.load(repo: repo, profile: profile) } }
+        .onReceive(repo.$days.dropFirst()) { _ in
+            Task {
+                await model.load(repo: repo, profile: profile)
+                await model.loadRings(repo: repo)
+            }
+        }
+        .task { await model.loadRings(repo: repo) }
     }
 
     private static let whole: (Double) -> String = { "\(Int($0.rounded()))" }
@@ -79,40 +86,80 @@ struct JohanHomeView: View {
 
     // MARK: Header
 
-    /// Fitness-style header: the day switcher as a small caps date line over a large title, the strap chip
-    /// trailing. Connection, battery and sync live behind the chip.
+    /// The day at the top: the date over a large title (tap it for the month calendar), a "Today" pill once
+    /// the day is not today, the strap chip trailing, and the week strip of mini rings underneath.
     private var header: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 2) {
-                    Button { step(1) } label: { Image(systemName: "chevron.left").frame(width: 30, height: 30) }
-                        .disabled(!model.canGoBack(repo: repo))
-                        .opacity(model.canGoBack(repo: repo) ? 1 : 0.3)
-                        .accessibilityLabel("Previous day")
-                    Text(model.dayDate(offset: model.dayOffset)
-                        .formatted(.dateTime.weekday(.wide).day().month(.abbreviated).locale(AppLanguage.activeLocale))
-                        .uppercased())
-                        .font(.system(.footnote, weight: .semibold))
-                        .lineLimit(1)
-                        .contentTransition(.interpolate)
-                    Button { step(-1) } label: { Image(systemName: "chevron.right").frame(width: 30, height: 30) }
-                        .disabled(model.dayOffset == 0)
-                        .opacity(model.dayOffset == 0 ? 0.3 : 1)
-                        .accessibilityLabel("Next day")
+        let maxOffset = model.maxOffset(repo: repo)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 12) {
+                Button { showCalendar = true } label: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(dateLine)
+                            .font(.system(.subheadline, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textSecondary)
+                            .lineLimit(1)
+                            .id(model.dayOffset)
+                            .transition(dayTextTransition)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(dayTitle)
+                                .font(.system(.largeTitle, weight: .bold))
+                                .foregroundStyle(JohanTheme.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .id(model.dayOffset)
+                                .transition(dayTextTransition)
+                            Image(systemName: "chevron.down")
+                                .font(.system(.footnote, weight: .bold))
+                                .foregroundStyle(JohanTheme.textTertiary)
+                                .rotationEffect(.degrees(showCalendar ? 180 : 0))
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
-                .font(.system(.footnote, weight: .semibold))
-                .foregroundStyle(JohanTheme.textSecondary)
-                .padding(.leading, -8)
-                Text(dayTitle)
-                    .font(.system(.largeTitle, weight: .bold))
-                    .foregroundStyle(JohanTheme.textPrimary)
-                    .contentTransition(.interpolate)
+                .buttonStyle(JohanPressStyle())
+                .accessibilityHint(Text("Opens the calendar"))
+                Spacer(minLength: 0)
+                if model.dayOffset > 0 {
+                    Button { select(0) } label: {
+                        Label("Today", systemImage: "arrow.uturn.forward")
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textPrimary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                            .background(Capsule().fill(JohanTheme.card)
+                                .overlay(Capsule().strokeBorder(JohanTheme.cardBorder, lineWidth: 0.5)))
+                    }
+                    .buttonStyle(JohanPressStyle())
+                    .padding(.bottom, 6)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+                JohanStrapChip().padding(.bottom, 4)
             }
             .animation(JohanTheme.Motion.daySlide, value: model.dayOffset)
-            Spacer(minLength: 0)
-            JohanStrapChip().padding(.bottom, 4)
+            JohanWeekStrip(model: model, maxOffset: maxOffset, onSelect: select)
+                .padding(.horizontal, -4)
         }
         .padding(.top, 4)
+        .sheet(isPresented: $showCalendar) {
+            JohanMonthCalendar(model: model, maxOffset: maxOffset, onSelect: select)
+        }
+    }
+
+    /// The date over the title, without the weekday when the title already is the weekday.
+    private var dateLine: String {
+        let date = model.dayDate(offset: model.dayOffset)
+        let style = Date.FormatStyle(locale: AppLanguage.activeLocale)
+        let sameYear = Calendar.current.isDate(date, equalTo: model.dayDate(offset: 0), toGranularity: .year)
+        if model.dayOffset < 2 { return date.formatted(style.weekday(.wide).day().month(.wide)) }
+        return sameYear ? date.formatted(style.day().month(.wide)) : date.formatted(style.day().month(.wide).year())
+    }
+
+    /// Header text slides in from the side the day came from, like the content below it.
+    private var dayTextTransition: AnyTransition {
+        motion.isStill ? .opacity : .asymmetric(
+            insertion: .move(edge: enterFromLeading ? .leading : .trailing).combined(with: .opacity),
+            removal: .opacity)
     }
 
     private var dayTitle: String {
@@ -125,16 +172,22 @@ struct JohanHomeView: View {
         }
     }
 
-    /// delta +1 = one day back, -1 = one day forward. The direction is committed first so the outgoing
-    /// content's removal transition already carries it, then the day changes in the next turn.
+    /// delta +1 = one day back, -1 = one day forward (the content swipe).
     private func step(_ delta: Int) {
         let next = model.dayOffset + delta
         guard next >= 0, delta < 0 || model.canGoBack(repo: repo) else { return }
-        enterFromLeading = delta > 0
+        select(next)
+    }
+
+    /// Jump to any day. The direction is committed first so the outgoing content's removal transition
+    /// already carries it, then the day changes in the next turn.
+    private func select(_ offset: Int) {
+        guard offset != model.dayOffset, offset >= 0, offset <= model.maxOffset(repo: repo) else { return }
+        enterFromLeading = offset > model.dayOffset
         StrandHaptic.selection.play()
         DispatchQueue.main.async {
-            if motion.isStill { model.dayOffset = next }
-            else { withAnimation(JohanTheme.Motion.daySlide) { model.dayOffset = next } }
+            if motion.isStill { model.dayOffset = offset }
+            else { withAnimation(JohanTheme.Motion.daySlide) { model.dayOffset = offset } }
         }
     }
 

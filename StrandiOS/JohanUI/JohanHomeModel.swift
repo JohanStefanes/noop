@@ -41,8 +41,19 @@ final class JohanHomeModel: ObservableObject {
         var confidence: ScoreConfidence?
     }
 
+    /// One day's three ring values for the week strip and the month calendar.
+    struct DayRings: Equatable {
+        var recovery: Double?
+        var sleepPct: Double?
+        var strain21: Double?
+        var isEmpty: Bool { recovery == nil && sleepPct == nil && strain21 == nil }
+    }
+
     /// 0 = today, 1 = yesterday, ...
     @Published var dayOffset = 0
+    /// Ring values by day key, from the stored daily rows and the sleep-performance series. Today's entry is
+    /// overlaid with the open snapshot (live Effort) by `rings(for:)`, so the strip and the hero agree.
+    @Published private(set) var dayRings: [String: DayRings] = [:]
     @Published private(set) var snapshot = Snapshot()
     @Published private(set) var loaded = false
     /// The newest heart-rate sample already stored for today, so the live card has an honest number to
@@ -55,6 +66,43 @@ final class JohanHomeModel: ObservableObject {
         guard let earliest = repo.freshness.earliestDay else { return false }
         return dayKey(offset: dayOffset + 1) >= earliest
     }
+
+    /// The furthest day back that has data (its offset), or 0 when nothing is stored yet.
+    func maxOffset(repo: Repository) -> Int {
+        guard let earliest = repo.freshness.earliestDay,
+              let date = Self.keyParser.date(from: earliest) else { return 0 }
+        let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: date),
+                                                   to: Calendar.current.startOfDay(for: dayDate(offset: 0))).day ?? 0
+        return max(0, days)
+    }
+
+    /// The rings for one day. Today reads the open snapshot when it is today's, so a strip cell never shows
+    /// an older Effort than the hero above it.
+    func rings(for key: String) -> DayRings {
+        if key == snapshot.dayKey, snapshot.isToday {
+            return DayRings(recovery: snapshot.recovery, sleepPct: snapshot.sleepPct, strain21: snapshot.strain21)
+        }
+        return dayRings[key] ?? DayRings()
+    }
+
+    func loadRings(repo: Repository) async {
+        let sleep = await repo.exploreSeries(key: "sleep_performance", source: "my-whoop")
+        var out: [String: DayRings] = [:]
+        for d in repo.days {
+            out[d.day, default: DayRings()].recovery = d.recovery
+            out[d.day, default: DayRings()].strain21 = d.strain.map { UnitFormatter.effortValue($0, scale: .whoop) }
+        }
+        for p in sleep { out[p.day, default: DayRings()].sleepPct = p.value }
+        if out != dayRings { dayRings = out }
+    }
+
+    static let keyParser: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     func dayKey(offset: Int) -> String {
         let day = Repository.logicalDay(Date())

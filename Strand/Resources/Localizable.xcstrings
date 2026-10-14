@@ -1,6 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Opens the calendar": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Opens the calendar"}}, "de": {"stringUnit": {"state": "translated", "value": "Öffnet den Kalender"}}}},
+    "Previous month": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Previous month"}}, "de": {"stringUnit": {"state": "translated", "value": "Vorheriger Monat"}}}},
+    "Next month": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Next month"}}, "de": {"stringUnit": {"state": "translated", "value": "Nächster Monat"}}}},
+    "No recovery scores this month": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No recovery scores this month"}}, "de": {"stringUnit": {"state": "translated", "value": "Diesen Monat keine Erholungswerte"}}}},
+    "Avg recovery": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Avg recovery"}}, "de": {"stringUnit": {"state": "translated", "value": "Ø Erholung"}}}},
+    "Recovery %lld %%": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery %lld %%"}}, "de": {"stringUnit": {"state": "translated", "value": "Erholung %lld %%"}}}},
     "Very low · charge now": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Very low · charge now"}}, "de": {"stringUnit": {"state": "translated", "value": "Sehr schwach · jetzt laden"}}}},
     "Low · charge soon": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Low · charge soon"}}, "de": {"stringUnit": {"state": "translated", "value": "Schwach · bald laden"}}}},
     "Good charge": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Good charge"}}, "de": {"stringUnit": {"state": "translated", "value": "Gut geladen"}}}},
