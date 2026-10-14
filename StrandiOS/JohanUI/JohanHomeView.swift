@@ -87,10 +87,10 @@ struct JohanHomeView: View {
     // MARK: Header
 
     /// The day at the top: the date over a large title (tap it for the month calendar), a "Today" pill once
-    /// the day is not today, the strap chip trailing, and the week strip underneath.
+    /// the day is not today, and the strap chip trailing.
     private var header: some View {
         let maxOffset = model.maxOffset(repo: repo)
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .bottom, spacing: 12) {
                 Button { showCalendar = true } label: {
                     VStack(alignment: .leading, spacing: 0) {
@@ -137,8 +137,6 @@ struct JohanHomeView: View {
                 JohanStrapChip().padding(.bottom, 4)
             }
             .animation(JohanTheme.Motion.daySlide, value: model.dayOffset)
-            JohanWeekStrip(model: model, maxOffset: maxOffset, onSelect: select)
-                .padding(.horizontal, -4)
         }
         .padding(.top, 4)
         .sheet(isPresented: $showCalendar) {

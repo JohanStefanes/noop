@@ -2,11 +2,10 @@
 import SwiftUI
 import StrandDesign
 
-// JohanDayPicker.swift — how Home moves between days: a week strip of dates under the title, a
-// month calendar behind the title, and a "Today" pill to come back. Every day is addressed by its offset
+// JohanDayPicker.swift — the month calendar behind the Home title. Every day is addressed by its offset
 // from today (0 = today, 1 = yesterday), the same coordinate `JohanHomeModel.dayOffset` uses, and every
-// date goes through `JohanHomeModel.dayDate(offset:)`, so the strip, the calendar and the content cannot
-// name different days.
+// date goes through `JohanHomeModel.dayDate(offset:)`, so the calendar and the content cannot name
+// different days.
 
 /// Calendar arithmetic over day offsets, anchored on the model's logical "today".
 @MainActor
@@ -22,20 +21,6 @@ struct JohanDayMath {
 
     func offset(of date: Date) -> Int {
         cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: today)).day ?? 0
-    }
-
-    /// The seven days of the week `weeksBack` weeks before the current one, oldest first.
-    func week(_ weeksBack: Int) -> [Date] {
-        let start = cal.dateInterval(of: .weekOfYear, for: today)?.start ?? today
-        let first = cal.date(byAdding: .day, value: -7 * weeksBack, to: start) ?? start
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: first) }
-    }
-
-    func weeksBack(ofOffset offset: Int) -> Int {
-        let date = model.dayDate(offset: offset)
-        let a = cal.dateInterval(of: .weekOfYear, for: date)?.start ?? date
-        let b = cal.dateInterval(of: .weekOfYear, for: today)?.start ?? today
-        return max(0, (cal.dateComponents([.day], from: a, to: b).day ?? 0) / 7)
     }
 
     /// First day of the month `monthsBack` months before the current one.
@@ -68,99 +53,6 @@ struct JohanDayMath {
 
     func dayNumber(_ date: Date) -> String {
         date.formatted(.dateTime.day().locale(AppLanguage.activeLocale))
-    }
-}
-
-// MARK: - Week strip
-
-/// Seven days under the Home title: the date, and a dot in the day's recovery colour. A filled circle
-/// glides to the chosen day; swiping the strip pages whole weeks (browsing does not change the day, a tap does). The strip
-/// follows the content: a swipe or a calendar pick that leaves the visible week brings that week in.
-struct JohanWeekStrip: View {
-    @ObservedObject var model: JohanHomeModel
-    let maxOffset: Int
-    let onSelect: (Int) -> Void
-
-    @State private var page = 0
-    @Namespace private var selection
-    private let motion = JohanStill()
-
-    var body: some View {
-        let math = JohanDayMath(model: model)
-        let lastPage = math.weeksBack(ofOffset: maxOffset)
-        TabView(selection: $page) {
-            ForEach(Array((0...lastPage).reversed()), id: \.self) { weeksBack in
-                weekRow(math.week(weeksBack), math: math).tag(weeksBack)
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 66)
-        .onAppear { page = math.weeksBack(ofOffset: model.dayOffset) }
-        .onChange(of: model.dayOffset) { _, offset in
-            let target = math.weeksBack(ofOffset: offset)
-            guard target != page else { return }
-            if motion.isStill { page = target } else { withAnimation(JohanTheme.Motion.daySlide) { page = target } }
-        }
-        .onChange(of: page) { _, _ in StrandHaptic.selection.play() }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Days"))
-    }
-
-    private func weekRow(_ days: [Date], math: JohanDayMath) -> some View {
-        HStack(spacing: 4) {
-            ForEach(days, id: \.self) { date in
-                cell(date, offset: math.offset(of: date), math: math)
-            }
-        }
-        .padding(.horizontal, 2)
-    }
-
-    private func cell(_ date: Date, offset: Int, math: JohanDayMath) -> some View {
-        let selected = offset == model.dayOffset
-        let isToday = offset == 0
-        let available = offset >= 0 && offset <= maxOffset
-        let rings = model.rings(for: model.dayKey(offset: offset))
-        return Button {
-            guard available, !selected else { return }
-            onSelect(offset)
-        } label: {
-            VStack(spacing: 6) {
-                Text(date.formatted(.dateTime.weekday(.narrow).locale(AppLanguage.activeLocale)))
-                    .font(.system(.caption2, weight: .semibold))
-                    .foregroundStyle(JohanTheme.textTertiary)
-                Text(math.dayNumber(date))
-                    .font(.system(.callout, design: .rounded, weight: selected || isToday ? .bold : .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(selected ? JohanTheme.background
-                                     : available ? JohanTheme.textPrimary : JohanTheme.textTertiary.opacity(0.6))
-                    .frame(width: 34, height: 34)
-                    .background {
-                        if selected {
-                            Circle().fill(JohanTheme.textPrimary)
-                                .matchedGeometryEffect(id: "pill", in: selection)
-                        } else if isToday {
-                            Circle().strokeBorder(JohanTheme.textTertiary, lineWidth: 1)
-                        }
-                    }
-                // One signal per day: the recovery zone, nothing where there is no score.
-                Circle()
-                    .fill(available ? rings.recovery.map { JohanTheme.RecoveryZone($0).color } ?? .clear : .clear)
-                    .frame(width: 5, height: 5)
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(JohanPressStyle())
-        .disabled(!available)
-        .accessibilityLabel(Text(Self.accessibilityText(date, rings: rings, isToday: isToday)))
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    static func accessibilityText(_ date: Date, rings: JohanHomeModel.DayRings, isToday: Bool) -> String {
-        var parts = [date.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(AppLanguage.activeLocale))]
-        if isToday { parts.insert(String(localized: "Today"), at: 0) }
-        if let r = rings.recovery { parts.append(String(localized: "Recovery \(Int(r.rounded())) %")) }
-        return parts.joined(separator: ", ")
     }
 }
 
@@ -289,8 +181,15 @@ struct JohanMonthCalendar: View {
         }
         .buttonStyle(JohanPressStyle())
         .disabled(!available)
-        .accessibilityLabel(Text(JohanWeekStrip.accessibilityText(date, rings: rings, isToday: isToday)))
+        .accessibilityLabel(Text(Self.accessibilityText(date, rings: rings, isToday: isToday)))
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    static func accessibilityText(_ date: Date, rings: JohanHomeModel.DayRings, isToday: Bool) -> String {
+        var parts = [date.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(AppLanguage.activeLocale))]
+        if isToday { parts.insert(String(localized: "Today"), at: 0) }
+        if let r = rings.recovery { parts.append(String(localized: "Recovery \(Int(r.rounded())) %")) }
+        return parts.joined(separator: ", ")
     }
 
     /// The month in recovery terms: the average and how many days fell in each zone.
