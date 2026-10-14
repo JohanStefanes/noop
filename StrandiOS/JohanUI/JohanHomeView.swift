@@ -4,9 +4,9 @@ import StrandDesign
 import StrandAnalytics
 import WhoopProtocol
 
-/// JohanUI Home: day navigation, Sleep / Recovery / Strain dials, vitals vs baseline, a strain
-/// recommendation and the live HR card. While the personal baselines are still forming, the recovery and
-/// sleep dials are replaced by a calibration card ("Tag X/4").
+/// JohanUI Home, in the Fitness / Health manner: a large dated title, recovery / sleep / strain as concentric
+/// rings with their values beneath, what the day means (or how far calibration has come), live heart rate
+/// beside the strain target, and vitals against the personal baseline.
 struct JohanHomeView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var live: LiveState
@@ -27,62 +27,24 @@ struct JohanHomeView: View {
 
     private func content(width: CGFloat, visibleHeight: CGFloat) -> some View {
         let s = model.snapshot.dayKey == model.dayKey(offset: model.dayOffset) ? model.snapshot : JohanHomeModel.Snapshot()
-        let hero = max(150, width * JohanTheme.Metrics.heroDialWidthFraction)
-        let medium = max(100, width * JohanTheme.Metrics.mediumDialWidthFraction)
+        let zone = s.recovery.map(JohanTheme.RecoveryZone.init)
+        let recColor = zone?.color ?? JohanTheme.textSecondary
         let gap = JohanTheme.Metrics.cardSpacing
         return JohanScreen(title: "", showsNavigationBar: false) {
             header.johanStagger(0)
-            // Flexible spacers share any spare height, so on a tall phone the sections spread out to fill the
-            // screen; the minimum height only applies when everything already fits, so small phones and large
-            // Dynamic Type simply scroll.
             VStack(spacing: gap) {
-                if let day = s.calibrationDay {
-                    calibrationHero(day: day, size: hero).johanStagger(1)
-                    Spacer(minLength: 0)
-                    // Both cards take the taller one's height, so the row reads as one band.
-                    JohanAdaptiveStack(spacing: gap) {
-                        JohanCard { strainDial(s, size: medium, haptic: true).frame(maxHeight: .infinity) }
-                        JohanCard { liveHRContent.frame(maxHeight: .infinity, alignment: .top) }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .johanStagger(2)
-                } else {
-                    // Tapping the score explains it; nothing to explain without a score.
-                    Button { showRecoveryDetail = true } label: {
-                        JohanDial(title: String(localized: "Recovery"), value: s.recovery, format: Self.whole, unitText: "%",
-                                  fraction: s.recovery.map { $0 / 100 },
-                                  color: s.recovery.map(JohanTheme.recoveryColor) ?? JohanTheme.recoveryGreen,
-                                  replayKey: model.dayOffset, hapticOnSettle: true, size: hero, numberScale: 0.34,
-                                  showsTitle: s.recovery == nil)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(JohanPressStyle())
-                    .disabled(s.recovery == nil)
-                    .accessibilityHint("Shows what shaped your recovery")
-                    .johanStagger(1)
-                    if let rec = s.recovery { verdict(rec, isToday: s.isToday).johanStagger(1) }
-                    Spacer(minLength: 0)
-                    JohanAdaptiveStack(spacing: gap) {
-                        tabLink(.sleep, hint: String(localized: "Opens Sleep")) {
-                            JohanDial(title: String(localized: "Sleep"), value: s.sleepPct, format: Self.whole, unitText: "%",
-                                      fraction: s.sleepPct.map { $0 / 100 }, color: JohanTheme.sleepViolet,
-                                      replayKey: model.dayOffset, size: medium)
-                        }
-                        tabLink(.strain, hint: String(localized: "Opens Strain")) { strainDial(s, size: medium, haptic: false) }
-                    }
-                    .johanStagger(2)
+                ringsHero(s, zone: zone, recColor: recColor, size: min(260, width * 0.72)).johanStagger(1)
+                statsRow(s, recColor: recColor).johanStagger(2)
+                statusCard(s, zone: zone).padding(.top, 6).johanStagger(3)
+                // Both cards take the taller one's height, so the row reads as one band.
+                JohanAdaptiveStack(spacing: 12) {
+                    JohanCard(padding: 14) { liveHRContent.frame(maxHeight: .infinity, alignment: .top) }
+                    strainTargetCard(s, recColor: recColor)
                 }
-                Spacer(minLength: 0)
-                vitalsCard(s).johanStagger(3)
-                if s.calibrationDay == nil {
-                    Spacer(minLength: 0)
-                    recommendationCard(s).johanStagger(4)
-                }
-                if s.calibrationDay == nil, live.connected || live.heartRate != nil {
-                    JohanCard { liveHRContent }.johanStagger(5)
-                }
+                .fixedSize(horizontal: false, vertical: true)
+                .johanStagger(4)
+                vitalsCard(s).johanStagger(5)
             }
-            .frame(minHeight: max(0, visibleHeight - JohanTheme.Metrics.homeChromeAllowance))
             .id(model.dayOffset)
             .transition(.asymmetric(
                 insertion: .move(edge: enterFromLeading ? .leading : .trailing).combined(with: .opacity),
@@ -106,51 +68,51 @@ struct JohanHomeView: View {
     }
 
     private static let whole: (Double) -> String = { "\(Int($0.rounded()))" }
+    private static let tenth: (Double) -> String = { String(format: "%.1f", $0) }
 
-    /// Wraps a ring so a tap switches to the tab that explains it.
+    /// Wraps content so a tap switches to the tab that explains it.
     private func tabLink<Label: View>(_ tab: JohanTab, hint: String, @ViewBuilder label: () -> Label) -> some View {
         Button { selectTab(tab) } label: { label().contentShape(Rectangle()) }
             .buttonStyle(JohanPressStyle())
             .accessibilityHint(hint)
     }
 
-    // MARK: Day navigation
+    // MARK: Header
 
-    /// One row: the day switcher centred, the strap chip trailing. The chevrons sit right beside the title
-    /// so the switcher reads as one control; connection, battery and sync live behind the chip.
+    /// Fitness-style header: the day switcher as a small caps date line over a large title, the strap chip
+    /// trailing. Connection, battery and sync live behind the chip.
     private var header: some View {
-        ZStack {
-            dayNavigator
-            HStack {
-                Spacer()
-                JohanStrapChip()
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 2) {
+                    Button { step(1) } label: { Image(systemName: "chevron.left").frame(width: 30, height: 30) }
+                        .disabled(!model.canGoBack(repo: repo))
+                        .opacity(model.canGoBack(repo: repo) ? 1 : 0.3)
+                        .accessibilityLabel("Previous day")
+                    Text(model.dayDate(offset: model.dayOffset)
+                        .formatted(.dateTime.weekday(.wide).day().month(.abbreviated).locale(AppLanguage.activeLocale))
+                        .uppercased())
+                        .font(.system(.footnote, weight: .semibold))
+                        .lineLimit(1)
+                        .contentTransition(.interpolate)
+                    Button { step(-1) } label: { Image(systemName: "chevron.right").frame(width: 30, height: 30) }
+                        .disabled(model.dayOffset == 0)
+                        .opacity(model.dayOffset == 0 ? 0.3 : 1)
+                        .accessibilityLabel("Next day")
+                }
+                .font(.system(.footnote, weight: .semibold))
+                .foregroundStyle(JohanTheme.textSecondary)
+                .padding(.leading, -8)
+                Text(dayTitle)
+                    .font(.system(.largeTitle, weight: .bold))
+                    .foregroundStyle(JohanTheme.textPrimary)
+                    .contentTransition(.interpolate)
             }
+            .animation(JohanTheme.Motion.daySlide, value: model.dayOffset)
+            Spacer(minLength: 0)
+            JohanStrapChip().padding(.bottom, 4)
         }
         .padding(.top, 4)
-    }
-
-    private var dayNavigator: some View {
-        HStack(spacing: 0) {
-            Button { step(1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
-                .disabled(!model.canGoBack(repo: repo))
-                .accessibilityLabel("Previous day")
-            VStack(spacing: 1) {
-                Text(dayTitle).font(.system(.headline))
-                    .contentTransition(.interpolate)
-                Text(model.dayDate(offset: model.dayOffset)
-                    .formatted(.dateTime.day().month(.abbreviated).locale(AppLanguage.activeLocale)))
-                    .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
-            }
-            .frame(minWidth: 110)
-            .lineLimit(1)
-            .animation(JohanTheme.Motion.daySlide, value: model.dayOffset)
-            Button { step(-1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }
-                .disabled(model.dayOffset == 0)
-                .opacity(model.dayOffset == 0 ? 0.25 : 1)
-                .accessibilityLabel("Next day")
-        }
-        .font(.system(.subheadline, weight: .semibold))
-        .foregroundStyle(JohanTheme.textPrimary)
     }
 
     private var dayTitle: String {
@@ -176,29 +138,172 @@ struct JohanHomeView: View {
         }
     }
 
-    // MARK: Dials
+    // MARK: Rings
 
-    private func strainDial(_ s: JohanHomeModel.Snapshot, size: CGFloat, haptic: Bool) -> some View {
-        JohanDial(title: String(localized: "Strain"), value: s.strain21, format: { String(format: "%.1f", $0) },
-                  unitText: String(localized: "of 21"), fraction: s.strain21.map { $0 / 21 }, color: JohanTheme.strainBlue,
-                  replayKey: model.dayOffset, hapticOnSettle: haptic, size: size)
+    /// Recovery, sleep and strain as concentric rings (outermost first), the recovery ring in its zone colour
+    /// over a soft glow of the same. Tapping explains the recovery score; there is nothing to explain without one.
+    private func ringsHero(_ s: JohanHomeModel.Snapshot, zone: JohanTheme.RecoveryZone?, recColor: Color,
+                           size: CGFloat) -> some View {
+        Button { showRecoveryDetail = true } label: {
+            JohanActivityRings(rings: [
+                .init(fraction: s.recovery.map { $0 / 100 }, color: recColor),
+                .init(fraction: s.sleepPct.map { $0 / 100 }, color: JohanTheme.sleepViolet),
+                .init(fraction: s.strain21.map { $0 / 21 }, color: JohanTheme.strainBlue),
+            ], size: size, lineWidth: size * 0.088, spacing: size * 0.016, replayKey: model.dayOffset)
+            // The glow sits behind without taking layout space, so it never pushes the rings apart from
+            // the header and the values.
+            .background { JohanAmbientGlow(color: zone?.color ?? JohanTheme.strainBlue, size: size * 1.35) }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(JohanPressStyle())
+        .disabled(s.recovery == nil)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ringsAccessibilityLabel(s))
+        .accessibilityHint(s.recovery == nil ? "" : String(localized: "Shows what shaped your recovery"))
     }
 
-    // MARK: Calibration
+    private func ringsAccessibilityLabel(_ s: JohanHomeModel.Snapshot) -> String {
+        let rec = s.recovery.map { "\(Int($0.rounded())) %" } ?? "–"
+        let sleep = s.sleepPct.map { "\(Int($0.rounded())) %" } ?? "–"
+        let strain = s.strain21.map { String(format: "%.1f", $0) } ?? "–"
+        return String(localized: "Recovery \(rec), sleep \(sleep), strain \(strain) of 21")
+    }
 
-    private func calibrationHero(day: Int, size: CGFloat) -> some View {
-        let total = model.calibrationLength
-        return VStack(spacing: 12) {
-            JohanCalibrationRing(fraction: Double(day) / Double(total), day: day, total: total, size: size)
-            JohanOverline(String(localized: "Calibration"))
-            Text("Your strap is getting to know you")
-                .font(.system(.headline))
-            Text("Recovery and sleep appear after the first nights, once your personal baselines are set. Wear the strap overnight too.")
-                .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
-                .multilineTextAlignment(.center)
+    // MARK: Stats
+
+    /// The three ring values under the rings, each labelled in its ring's colour. Sleep and strain open
+    /// their tabs; recovery opens its breakdown.
+    private func statsRow(_ s: JohanHomeModel.Snapshot, recColor: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button { showRecoveryDetail = true } label: {
+                stat(String(localized: "Recovery"), s.recovery, format: Self.whole, unit: "%", color: recColor)
+            }
+            .buttonStyle(JohanPressStyle())
+            .disabled(s.recovery == nil)
+            tabLink(.sleep, hint: String(localized: "Opens Sleep")) {
+                stat(String(localized: "Sleep"), s.sleepPct, format: Self.whole, unit: "%", color: JohanTheme.sleepViolet)
+            }
+            tabLink(.strain, hint: String(localized: "Opens Strain")) {
+                stat(String(localized: "Strain"), s.strain21, format: Self.tenth, unit: "/21", color: JohanTheme.strainBlue)
+            }
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    private func stat(_ title: String, _ value: Double?, format: @escaping (Double) -> String, unit: String,
+                      color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(.footnote, weight: .semibold)).foregroundStyle(color)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                if let value {
+                    CountUpText(value: value, format: format, font: JohanTheme.number(30),
+                                color: JohanTheme.textPrimary, animation: JohanTheme.Motion.countUp)
+                        .id(model.dayOffset)
+                    Text(unit).font(.system(.callout, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JohanTheme.textSecondary)
+                } else {
+                    Text("–").font(JohanTheme.number(30)).foregroundStyle(JohanTheme.textTertiary)
+                }
+            }
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Status
+
+    /// What today means: the recovery zone and its training hint, or, while the baselines form, how far
+    /// calibration has come. A past day shows the zone without advice for a day that is over.
+    @ViewBuilder
+    private func statusCard(_ s: JohanHomeModel.Snapshot, zone: JohanTheme.RecoveryZone?) -> some View {
+        if let day = s.calibrationDay {
+            statusRow(icon: "hourglass", color: JohanTheme.strainBlue,
+                      title: String(localized: "Calibrating · day \(String(day)) of \(String(model.calibrationLength))"),
+                      detail: String(localized: "Recovery and sleep appear after the first nights, once your personal baselines are set. Wear the strap overnight too."))
+        } else if let zone {
+            statusRow(icon: "checkmark", color: zone.color, title: zone.title,
+                      detail: s.isToday ? zone.hint : nil)
+        }
+    }
+
+    private func statusRow(icon: String, color: Color, title: String, detail: String?) -> some View {
+        JohanCard {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(.body, weight: .bold))
+                    .foregroundStyle(color)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(color.opacity(0.16)))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                    if let detail {
+                        Text(detail).font(.system(.subheadline)).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Strain target
+
+    /// The recovery-based target range with a small gauge of today's strain; opens the Strain tab.
+    private func strainTargetCard(_ s: JohanHomeModel.Snapshot, recColor: Color) -> some View {
+        Button { selectTab(.strain) } label: {
+            JohanCard(padding: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Strain target").font(.system(.footnote, weight: .semibold)).foregroundStyle(JohanTheme.strainBlue)
+                    if let band = s.targetBand {
+                        Text("\(band.lowerBound)–\(band.upperBound)")
+                            .font(JohanTheme.number(34)).foregroundStyle(recColor)
+                            .contentTransition(.numericText())
+                        miniGauge(band: band, current: s.strain21, color: recColor).padding(.top, 6)
+                        Text(JohanStrainView.progressText(current: s.strain21, band: band, isToday: s.isToday))
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    } else {
+                        Text("–").font(JohanTheme.number(34)).foregroundStyle(JohanTheme.textTertiary)
+                        Text("The target follows your recovery and appears once it has been calculated.")
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+            }
+        }
+        .buttonStyle(JohanPressStyle())
+        .accessibilityHint("Opens Strain")
+    }
+
+    /// Track 0–21, the target range outlined in the recovery colour, the day's strain filled in.
+    private func miniGauge(band: ClosedRange<Int>, current: Double?, color: Color) -> some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let x = { (v: Double) in w * CGFloat(min(max(v, 0), 21) / 21) }
+            ZStack(alignment: .leading) {
+                Capsule().fill(JohanTheme.track)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.opacity(0.18))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(color, lineWidth: 1.5))
+                    .frame(width: x(Double(band.upperBound)) - x(Double(band.lowerBound)), height: 14)
+                    .offset(x: x(Double(band.lowerBound)))
+                Capsule().fill(JohanTheme.strainBlue)
+                    .frame(width: max(8, x(current ?? 0)))
+                    .opacity(current == nil ? 0 : 1)
+                    .animation(.spring(response: 1, dampingFraction: 0.85), value: current)
+            }
+            .frame(height: 8)
+            .frame(maxHeight: .infinity)
+        }
+        .frame(height: 14)
+        .accessibilityHidden(true)
     }
 
     // MARK: Vitals
@@ -206,7 +311,7 @@ struct JohanHomeView: View {
     private func vitalsCard(_ s: JohanHomeModel.Snapshot) -> some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 12) {
-                JohanOverline(String(localized: "Vitals"))
+                Text("Vitals").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
                 JohanAdaptiveStack(spacing: 8) {
                     vital("HRV", s.hrv, unit: "ms", decimals: 0, higherIsBetter: true)
                     vital(String(localized: "Resting HR"), s.restingHR, unit: "bpm", decimals: 0, higherIsBetter: false)
@@ -227,7 +332,7 @@ struct JohanHomeView: View {
                 .lineLimit(1).minimumScaleFactor(0.8)
             // Unit on the number's baseline: one line instead of two, and it reads as "89 ms".
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(v.value.map { String(format: "%.\(decimals)f", $0) } ?? "–").johanNumberFont(24)
+                Text(v.value.map { String(format: "%.\(decimals)f", $0) } ?? "–").johanNumberFont(22)
                 if v.value != nil {
                     Text(unit).font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
                 }
@@ -261,66 +366,6 @@ struct JohanHomeView: View {
         return (d > 0) == higherIsBetter ? JohanTheme.recoveryGreen : JohanTheme.recoveryRed
     }
 
-    // MARK: Verdict
-
-    /// The answer to "how am I today", directly under the dial: the zone as a word (so it never depends on
-    /// colour alone) and what it means for training. The strain card below no longer repeats it.
-    /// The training hint is advice for the day ahead, so a past day shows the zone only.
-    private func verdict(_ recovery: Double, isToday: Bool) -> some View {
-        let zone = JohanTheme.RecoveryZone(recovery)
-        return VStack(spacing: 4) {
-            Text(zone.title)
-                .font(.system(.title3, weight: .semibold))
-                .foregroundStyle(zone.color)
-            if isToday {
-                Text(zone.hint)
-                    .font(.system(.subheadline))
-                    .foregroundStyle(JohanTheme.textSecondary)
-            }
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-    }
-
-    // MARK: Strain target
-
-    @ViewBuilder
-    private func recommendationCard(_ s: JohanHomeModel.Snapshot) -> some View {
-        if let band = s.targetBand, let rec = s.recovery {
-            let color = JohanTheme.recoveryColor(rec)
-            Button { selectTab(.strain) } label: {
-                JohanCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            JohanOverline(String(localized: "Strain target"))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(.footnote, weight: .semibold))
-                                .foregroundStyle(JohanTheme.textTertiary)
-                                .accessibilityHidden(true)
-                        }
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(band.lowerBound)–\(band.upperBound)")
-                                .johanNumberFont(26, relativeTo: .title3)
-                                .foregroundStyle(color)
-                            Spacer()
-                            if let cur = s.strain21 {
-                                Text(String(localized: "now \(String(format: "%.1f", cur))"))
-                                    .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
-                            }
-                        }
-                        JohanTargetBand(band: band, current: s.strain21, color: color)
-                        Text(JohanStrainView.progressText(current: s.strain21, band: band, isToday: s.isToday))
-                            .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
-                    }
-                }
-            }
-            .buttonStyle(JohanPressStyle())
-            .accessibilityHint("Opens Strain")
-        }
-    }
-
     // MARK: Live HR
 
     /// The live HR card, holding the realtime-HR stream while it is on screen (see `JohanLiveHRDemand`).
@@ -337,22 +382,24 @@ struct JohanHomeView: View {
         // Connected and asking, nothing live yet: the few seconds the strap takes to start streaming.
         let waiting = live.connected && liveBPM == nil
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                JohanOverline(String(localized: "Live heart rate"))
-                Spacer()
-                Circle().fill(live.connected ? JohanTheme.recoveryGreen : JohanTheme.textTertiary)
-                    .frame(width: 8, height: 8)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(spacing: 6) {
                 // While waiting the heart beats at a calm resting tempo as a loading cue, dimmed so it is
                 // not read as a measurement; the live value takes over its tempo on arrival.
-                JohanPulsingHeart(bpm: liveBPM ?? (waiting ? 60 : nil))
-                    .opacity(liveBPM == nil ? 0.45 : 1)
-                Text(liveBPM.map(String.init) ?? stored.map { String($0.bpm) } ?? "–").johanNumberFont(40)
+                JohanPulsingHeart(bpm: liveBPM ?? (waiting ? 60 : nil), size: 14)
+                    .opacity(liveBPM == nil ? 0.5 : 1)
+                Text("Heart rate").font(.system(.footnote, weight: .semibold)).foregroundStyle(JohanTheme.recoveryRed)
+                Spacer(minLength: 0)
+                Circle().fill(live.connected ? JohanTheme.recoveryGreen : JohanTheme.textTertiary)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(liveBPM.map(String.init) ?? stored.map { String($0.bpm) } ?? "–").font(JohanTheme.number(34))
                     .foregroundStyle(liveBPM == nil ? JohanTheme.textTertiary : JohanTheme.textPrimary)
                     .contentTransition(.numericText())
                     .animation(JohanTheme.Motion.cardIn, value: liveBPM)
-                Text("bpm").font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
+                Text("bpm").font(.system(.footnote, design: .rounded, weight: .semibold))
+                    .foregroundStyle(JohanTheme.textSecondary)
             }
             if waiting {
                 JohanHRSearching().transition(.opacity)
@@ -362,6 +409,7 @@ struct JohanHomeView: View {
             // Connected but no reading says exactly that; why the strap sends none is not known here.
             Text(liveStatus(liveBPM: liveBPM, stored: stored))
                 .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)

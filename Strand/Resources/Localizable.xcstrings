@@ -1,6 +1,8 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Calibrating · day %@ of %@": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Calibrating · day %@ of %@"}}, "de": {"stringUnit": {"state": "translated", "value": "Kalibrierung · Tag %@ von %@"}}}},
+    "Recovery %@, sleep %@, strain %@ of 21": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery %@, sleep %@, strain %@ of 21"}}, "de": {"stringUnit": {"state": "translated", "value": "Erholung %@, Schlaf %@, Belastung %@ von 21"}}}},
     "Shows strap details": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Shows strap details"}}, "de": {"stringUnit": {"state": "translated", "value": "Zeigt Details zum Armband"}}}},
     "Battery %lld %%": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Battery %lld %%"}}, "de": {"stringUnit": {"state": "translated", "value": "Akku %lld %%"}}}},
     "Waiting for battery reading": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Waiting for battery reading"}}, "de": {"stringUnit": {"state": "translated", "value": "Warte auf Akkustand"}}}},

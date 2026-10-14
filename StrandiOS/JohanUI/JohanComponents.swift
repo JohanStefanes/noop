@@ -552,3 +552,91 @@ struct JohanHRSearching: View {
     }
 }
 #endif
+
+#if os(iOS)
+// MARK: - Activity rings
+
+/// Concentric rings in the Fitness manner, outermost first. Each draws in from 12 o'clock with a spring,
+/// staggered, on appear and on `replayKey` changes (a new day), and glides to a new fraction when the value
+/// moves. A nil fraction shows only the ring's track. Purely the graphic: the caller states the values.
+struct JohanActivityRings: View {
+    struct Ring {
+        let fraction: Double?
+        let color: Color
+    }
+
+    let rings: [Ring]
+    var size: CGFloat = 250
+    var lineWidth: CGFloat = 22
+    var spacing: CGFloat = 4
+    var replayKey: Int = 0
+
+    @State private var shown: [Double] = []
+    @State private var lastReplay: Int?
+    private let motion = JohanStill()
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(rings.enumerated()), id: \.offset) { i, ring in
+                let d = size - CGFloat(i) * 2 * (lineWidth + spacing)
+                Circle()
+                    .stroke(ring.color.opacity(0.18), lineWidth: lineWidth)
+                    .frame(width: d - lineWidth, height: d - lineWidth)
+                Circle()
+                    .trim(from: 0, to: max(0.0001, shown.indices.contains(i) ? shown[i] : 0))
+                    .stroke(ring.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: d - lineWidth, height: d - lineWidth)
+                    .opacity((shown.indices.contains(i) ? shown[i] : 0) > 0.001 ? 1 : 0)
+            }
+        }
+        .frame(width: size, height: size)
+        .task(id: Key(replay: replayKey, targets: rings.map { $0.fraction ?? 0 })) { await animate() }
+        .accessibilityHidden(true)
+    }
+
+    private struct Key: Equatable { let replay: Int; let targets: [Double] }
+
+    @MainActor private func animate() async {
+        let targets = rings.map { min(max($0.fraction ?? 0, 0), 1) }
+        if motion.isStill { shown = targets; lastReplay = replayKey; return }
+        if lastReplay != replayKey || shown.count != targets.count {
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) { shown = Array(repeating: 0, count: targets.count) }
+            lastReplay = replayKey
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        for i in targets.indices {
+            withAnimation(.spring(response: 1.1, dampingFraction: 0.82).delay(Double(i) * 0.12)) {
+                if shown.indices.contains(i) { shown[i] = targets[i] }
+            }
+        }
+    }
+}
+
+/// Soft light behind the rings in the recovery colour, slowly breathing. Decoration only; still when the
+/// motion gate is closed.
+struct JohanAmbientGlow: View {
+    let color: Color
+    var size: CGFloat = 340
+    @State private var breathe = false
+    private let motion = JohanStill()
+
+    var body: some View {
+        Circle()
+            .fill(RadialGradient(colors: [color.opacity(0.30), .clear], center: .center,
+                                 startRadius: 0, endRadius: size / 2))
+            .frame(width: size, height: size)
+            .blur(radius: 40)
+            .scaleEffect(breathe ? 1.12 : 1)
+            .opacity(breathe ? 0.9 : 0.6)
+            .animation(.easeInOut(duration: 1.2), value: color)
+            .onAppear {
+                guard !motion.isStill else { return }
+                withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) { breathe = true }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+#endif

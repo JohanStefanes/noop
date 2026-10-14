@@ -43,32 +43,33 @@ extension EnvironmentValues {
 }
 
 enum JohanTheme {
-    // Warm graphite, not blue-black: the palette of an instrument case rather than a template dark mode.
-    static let background = Color(hex: "#0d0d0c")
-    static let card = Color(hex: "#181816")
-    static let cardBorder = inkAlpha(0.07, highContrast: 0.22)
-    static let track = inkAlpha(0.08, highContrast: 0.24)
-    /// Unlit bezel ticks: a step above `track` so the chapter ring reads at a glance.
-    static let tick = inkAlpha(0.18, highContrast: 0.34)
+    // Apple-native dark: true black ground, translucent glass cards, the system's dark-mode signal colours
+    // (the Fitness / Health family), so the app reads as part of iOS rather than as a theme laid over it.
+    static let background = Color.black
+    /// Glass fill for cards: white at a low alpha over black, under a hairline edge (`cardBorder`).
+    static let card = inkAlpha(0.075, highContrast: 0.16)
+    static let cardBorder = inkAlpha(0.10, highContrast: 0.30)
+    static let track = inkAlpha(0.12, highContrast: 0.28)
+    /// Unlit bezel ticks (calibration and strain dials).
+    static let tick = inkAlpha(0.20, highContrast: 0.36)
 
-    // Muted signal colours: each still clears 5.7:1 on `card`, none of them neon.
-    static let recoveryGreen = Color(hex: "#5cc98d")
-    static let recoveryYellow = Color(hex: "#e6c04f")
-    static let recoveryRed = Color(hex: "#ec6a5b")
-    static let strainBlue = Color(hex: "#6ba4ea")
-    static let sleepViolet = Color(hex: "#a294f0")
+    // iOS dark-mode system colours; each clears 6:1 on black.
+    static let recoveryGreen = Color(hex: "#30D158")
+    static let recoveryYellow = Color(hex: "#FFD60A")
+    static let recoveryRed = Color(hex: "#FF453A")
+    static let strainBlue = Color(hex: "#64D2FF")
+    static let sleepViolet = Color(hex: "#A294FF")
 
-    /// Warm off-white ink; pure white glares against the graphite.
-    static let textPrimary = Color(hex: "#f2efe8")
-    /// 6.9:1 on `card` (higher with Increase Contrast).
-    static let textSecondary = inkAlpha(0.66, highContrast: 0.82)
-    /// 5.0:1 on `card`: above the 4.5:1 floor for small text, still a step below `textSecondary`.
-    static let textTertiary = inkAlpha(0.52, highContrast: 0.72)
+    static let textPrimary = Color.white
+    /// The system secondary label (#EBEBF5 at 60 %): 9.6:1 on black.
+    static let textSecondary = inkAlpha(0.60, highContrast: 0.80)
+    /// 6.4:1 on black, still a clear step below `textSecondary`.
+    static let textTertiary = inkAlpha(0.46, highContrast: 0.68)
 
-    /// The warm ink at `alpha`, raised to `highContrast` while the system Increase Contrast setting is on.
+    /// The system label ink (#EBEBF5) at `alpha`, raised to `highContrast` while Increase Contrast is on.
     private static func inkAlpha(_ alpha: CGFloat, highContrast: CGFloat) -> Color {
         Color(UIColor { traits in
-            UIColor(red: 0xf2 / 255, green: 0xef / 255, blue: 0xe8 / 255,
+            UIColor(red: 0xeb / 255, green: 0xeb / 255, blue: 0xf5 / 255,
                     alpha: traits.accessibilityContrast == .high ? highContrast : alpha)
         })
     }
@@ -116,7 +117,7 @@ enum JohanTheme {
 
     // MARK: Metrics
     enum Metrics {
-        static let cardRadius: CGFloat = 16
+        static let cardRadius: CGFloat = 22
         static let cardPadding: CGFloat = 16
         static let screenHPadding: CGFloat = 16
         static let cardSpacing: CGFloat = 14
@@ -135,11 +136,9 @@ enum JohanTheme {
 
     // MARK: Fonts (SF Pro text styles, so everything follows Dynamic Type)
     enum Fonts {
-        /// Instrument numerals: SF Pro with fixed-width digits, lighter as they grow (a 56 pt figure in
-        /// bold reads as a poster; in light it reads as a gauge). Small figures stay medium for legibility.
+        /// Figures: SF Pro Rounded semibold with fixed-width digits, as Fitness and Health set them.
         static func number(_ size: CGFloat) -> Font {
-            let weight: Font.Weight = size >= 40 ? .light : size >= 22 ? .regular : .medium
-            return .system(size: size, weight: weight).monospacedDigit()
+            .system(size: size, weight: .semibold, design: .rounded).monospacedDigit()
         }
         static let overline = Font.system(.subheadline, weight: .semibold)
         static let title = Font.system(.headline)
@@ -187,10 +186,12 @@ struct JohanCard<Content: View>: View {
         content()
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Surface alone separates the card; no outline, which is the first thing that reads as a template.
+            // Glass: a faint fill under a hairline edge, the Fitness / Health card.
             .background(
                 RoundedRectangle(cornerRadius: JohanTheme.Metrics.cardRadius, style: .continuous)
                     .fill(JohanTheme.card)
+                    .overlay(RoundedRectangle(cornerRadius: JohanTheme.Metrics.cardRadius, style: .continuous)
+                        .strokeBorder(JohanTheme.cardBorder, lineWidth: 0.5))
             )
             .johanPressable(pressable)
     }
