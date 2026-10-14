@@ -8,7 +8,7 @@ Inputs:
 
 Per night it reports, for the strap:
   - HR samples, minute coverage of the night, gaps longer than --gap-min and the longest one
-  - RR intervals (all / scorable: WHOOP 5 channels 5+7, not flagged tsSuspect), clean RMSSD + SDNN
+  - RR intervals (all / scorable: one WHOOP 5 transport, 5 else 7, not flagged tsSuspect), clean RMSSD + SDNN
 and against the Watch:
   - HR: pairs within +/- --pair-sec of each Watch sample, bias (strap - watch), MAE, Pearson r
   - HRV: for each Watch HRV (SDNN) reading, the strap SDNN over the SAME window, then bias / MAE
@@ -224,11 +224,7 @@ def fmt_ts(ts) -> str:
 def analyse(con, device: str, health: Health, nights: int, gap_min: float, pair_sec: float,
             now: datetime | None = None):
     rr_cols = columns(con, "rrInterval")
-    scorable = "1"
-    if "srcChannel" in rr_cols:
-        scorable = f"srcChannel IN {SCORABLE_WHOOP5_CHANNELS}"
-    if "tsSuspect" in rr_cols:
-        scorable += " AND tsSuspect IS NULL"
+    not_suspect = "(tsSuspect IS NULL OR tsSuspect <> 1)" if "tsSuspect" in rr_cols else "1"
     strap_sleep = [(r[0], r[1]) for r in con.execute(
         "SELECT startTs, endTs FROM sleepSession WHERE deviceId = ?", (device,))]
 
@@ -241,6 +237,14 @@ def analyse(con, device: str, health: Health, nights: int, gap_min: float, pair_
                          (device, int(a), int(b))).fetchall()
         rr_all = con.execute("SELECT COUNT(*) FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ?",
                              (device, int(a), int(b))).fetchone()[0]
+        # Like WhoopStore.rrIntervals: ONE scorable transport for the whole window (the lowest of 5/7
+        # present), never both, since history and standard BLE carry the same beats twice.
+        scorable = not_suspect
+        if "srcChannel" in rr_cols:
+            chan = con.execute(f"SELECT MIN(srcChannel) FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
+                               f"AND srcChannel IN {SCORABLE_WHOOP5_CHANNELS} AND {not_suspect}",
+                               (device, int(a), int(b))).fetchone()[0]
+            scorable += f" AND srcChannel = {int(chan) if chan is not None else -1}"
         rr = con.execute(f"SELECT ts, rrMs FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
                          f"AND {scorable} ORDER BY ts, {'ord' if 'ord' in rr_cols else 'seq'}",
                          (device, int(a), int(b))).fetchall()

@@ -41,6 +41,8 @@ class MgVsWatchTest(unittest.TestCase):
                 con.execute("INSERT INTO hrSample VALUES (?, ?, 60)", (DEVICE, t))
                 rr = 1000 + (20 if i % 2 else -20)
                 con.execute("INSERT INTO rrInterval VALUES (?, ?, ?, 0, 0, ?, 7, NULL)", (DEVICE, t, rr, i))
+                # The same beat again over history (5): only one transport may be scored.
+                con.execute("INSERT INTO rrInterval VALUES (?, ?, ?, 1, 0, ?, 5, NULL)", (DEVICE, t, rr, i))
                 # A flagged 500 ms fill beat must not reach the scorable set.
                 if i % 50 == 0:
                     con.execute("INSERT INTO rrInterval VALUES (?, ?, 500, 1, 0, ?, 7, 1)", (DEVICE, t, i))
