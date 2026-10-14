@@ -7,8 +7,8 @@ import StrandDesign
 // Three dots (recovery, sleep, strain) spring in and orbit, fuse into one liquid blob, and the blob bursts
 // into the three concentric rings, which then fly into the exact place of the Home rings while the black
 // ground fades away. Home holds its cards back until the flight starts and its rings until they land, so
-// the hand-off reads as one continuous shape. Played once per process; skipped when the motion gate is
-// closed (`JohanStill`).
+// the hand-off reads as one continuous shape. Plays on a cold launch and again when the app is opened
+// after a while in the background; skipped when the motion gate is closed (`JohanStill`).
 
 /// Where the intro stands. Home reads it to hold its entrance until the rings arrive.
 enum JohanIntroPhase {
@@ -63,8 +63,11 @@ extension JohanTheme.Motion {
 }
 
 enum JohanIntro {
-    /// Once per process: a cold launch plays it, switching JohanUI off and on again does not.
+    /// A cold launch plays it, switching JohanUI off and on again does not.
     @MainActor static var played = false
+
+    /// Seconds in the background after which opening the app plays the intro again.
+    static let replayAfterBackground: TimeInterval = 10
 
     /// DEBUG `--no-intro` skips it (deterministic simulator screenshots).
     static var suppressed: Bool {

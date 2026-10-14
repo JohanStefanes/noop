@@ -25,6 +25,10 @@ struct JohanRootView: View {
     @State private var routed: NavRouter.Destination?
     @State private var introPhase: JohanIntroPhase = JohanIntro.played || JohanIntro.suppressed ? .done : .playing
     @State private var introTarget: JohanIntroTarget?
+    /// When the app last went to the background, so a real return replays the intro and an app-switcher
+    /// flick does not.
+    @State private var backgroundedAt: Date?
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -52,6 +56,13 @@ struct JohanRootView: View {
             JohanIntro.played = true
             if motion.isStill { introPhase = .done }
         }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: backgroundedAt = Date()
+            case .active: replayIntroAfterReturn()
+            default: break
+            }
+        }
         // White, not an accent: green is reserved for "well recovered" in the content below.
         .tint(JohanTheme.textPrimary)
         // noop's own appearance setting sets preferredColorScheme higher up and wins over ours, so the
@@ -67,6 +78,16 @@ struct JohanRootView: View {
             router.requestedDestination = nil
             routed = dest
         }
+    }
+
+    /// Opening the app from the background plays the intro again, as a cold launch does. Only on Today
+    /// with nothing presented over it, since the rings land on the Home rings.
+    private func replayIntroAfterReturn() {
+        defer { backgroundedAt = nil }
+        guard let away = backgroundedAt, Date().timeIntervalSince(away) >= JohanIntro.replayAfterBackground,
+              introPhase == .done, selectedTab == JohanTab.home.rawValue, routed == nil,
+              !motion.isStill, !JohanIntro.suppressed else { return }
+        introPhase = .playing
     }
 
     /// Tab label whose icon bounces when its tab becomes selected (best effort: UIKit renders the bar item).
