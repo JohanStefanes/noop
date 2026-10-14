@@ -56,21 +56,34 @@ struct JohanStrapFacts {
 }
 
 /// Battery ring shared by the header chip and the strap page: the arc is the charge, the centre the
-/// number. Disconnected (or no reading yet) shows an empty ring with a slashed antenna instead of a stale
-/// figure.
+/// number. With no reading yet (or no strap connected) the centre shows the strap glyph instead of a stale
+/// figure; whether the link is up is the chip's status dot, not this ring.
+///
+/// Takes plain VALUES, not `JohanStrapFacts`: the facts wrap the `LiveState` class reference, which SwiftUI
+/// compares by identity, so a ring holding them was never re-rendered and kept its first (offline) state
+/// beside a status dot that had long turned green.
 struct JohanBatteryRing: View {
-    let facts: JohanStrapFacts
+    let battery: Double?
+    let connected: Bool
+    let arcColor: Color
     var size: CGFloat
     var lineWidth: CGFloat
 
+    init(facts: JohanStrapFacts, size: CGFloat, lineWidth: CGFloat) {
+        battery = facts.battery
+        connected = facts.connected
+        arcColor = facts.battery.map(facts.batteryColor) ?? JohanTheme.textTertiary
+        self.size = size
+        self.lineWidth = lineWidth
+    }
+
     var body: some View {
-        let pct = facts.battery
         ZStack {
             Circle().stroke(JohanTheme.textTertiary.opacity(0.35), lineWidth: lineWidth)
-            if let pct {
+            if let pct = battery {
                 Circle()
                     .trim(from: 0, to: max(0.02, min(1, pct / 100)))
-                    .stroke(facts.batteryColor(pct), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .stroke(arcColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(JohanTheme.Motion.daySlide, value: pct)
                 Text("\(Int(pct.rounded()))")
@@ -78,12 +91,32 @@ struct JohanBatteryRing: View {
                     .foregroundStyle(JohanTheme.textPrimary)
                     .minimumScaleFactor(0.6)
             } else {
-                Image(systemName: facts.connected ? "battery.0" : "antenna.radiowaves.left.and.right.slash")
-                    .font(.system(size: size * 0.32, weight: .semibold))
-                    .foregroundStyle(JohanTheme.textTertiary)
+                JohanStrapGlyph()
+                    .stroke(connected ? JohanTheme.textPrimary : JohanTheme.textTertiary,
+                            style: StrokeStyle(lineWidth: max(1.5, size * 0.045), lineCap: .round, lineJoin: .round))
+                    .frame(width: size * 0.34, height: size * 0.5)
             }
         }
         .frame(width: size, height: size)
+    }
+}
+
+/// A generic wrist strap seen face-on: the sensor pod in the middle with the band running off above and
+/// below. Drawn rather than taken from an asset, so no vendor artwork ships with the app.
+struct JohanStrapGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let w = rect.width, h = rect.height
+        let pod = CGRect(x: rect.minX, y: rect.midY - h * 0.22, width: w, height: h * 0.44)
+        p.addRoundedRect(in: pod, cornerSize: CGSize(width: w * 0.28, height: w * 0.28))
+        let bandInset = w * 0.2
+        for (from, to) in [(pod.minY, rect.minY), (pod.maxY, rect.maxY)] {
+            p.move(to: CGPoint(x: rect.minX + bandInset, y: from))
+            p.addLine(to: CGPoint(x: rect.minX + bandInset, y: to))
+            p.move(to: CGPoint(x: rect.maxX - bandInset, y: from))
+            p.addLine(to: CGPoint(x: rect.maxX - bandInset, y: to))
+        }
+        return p
     }
 }
 
