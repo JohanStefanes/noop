@@ -22,6 +22,10 @@ struct RootTabView: View {
     /// attached and would otherwise keep posting AI notifications for a feature the wearer switched off.
     @AppStorage("noop.coachEnabled") private var coachEnabled = true
     @AppStorage("noop.bottomBarAutoHide") private var bottomBarAutoHide = false
+    /// Personal UI layer (StrandiOS/JohanUI). Default ON; Mehr → "Johan-Oberfläche aktiv" turns it off to
+    /// restore this original shell. `johanClassicBypass` is set when JohanUI hosts this shell itself.
+    @AppStorage(JohanUI.enabledKey) private var johanUIEnabled = true
+    @Environment(\.johanClassicBypass) private var johanClassicBypass
 
     /// The live gym session, owned at the app root — see `LiftSessionController`.
     @EnvironmentObject private var liftSession: LiftSessionController
@@ -122,6 +126,14 @@ struct RootTabView: View {
     }
 
     var body: some View {
+        if johanUIEnabled && !johanClassicBypass {
+            JohanRootView(homeScreenQuickActionsEnabled: homeScreenQuickActionsEnabled)
+        } else {
+            classicBody
+        }
+    }
+
+    private var classicBody: some View {
         // The platform tab bar is intentionally left fully native. iOS 26 supplies Liquid Glass and
         // its dynamic interaction with scrolling content automatically; older supported releases use
         // the corresponding system material and safe-area behaviour from the same TabView.
