@@ -64,7 +64,10 @@ struct ManualWorkoutSheet: View {
     /// itself (capped at 168) instead of being squeezed to the text field's height. See `suggestionList`.
     @State private var suggestionsHeight: CGFloat = 0
 
+    /// `initialSport` seeds the Sport field of a fresh add (a one-tap "Log tennis" entry point); it is
+    /// ignored when `editing` is set, since an edit always starts from the row's own sport.
     init(editing: WorkoutRow? = nil,
+         initialSport: String? = nil,
          onSave: @escaping (_ row: WorkoutRow, _ replacing: WorkoutRow?) -> Void) {
         self.editing = editing
         self.onSave = onSave
@@ -72,7 +75,7 @@ struct ManualWorkoutSheet: View {
         let e = editing
         // Seeds the LOCALE-STABLE editable form, not the localized display: the field's content is
         // persisted verbatim on save, and a translated word would split cross-source dedup per language.
-        _sport = State(initialValue: e.map { WorkoutSource.editableSport($0.sport) } ?? "")
+        _sport = State(initialValue: e.map { WorkoutSource.editableSport($0.sport) } ?? initialSport ?? "")
         // A fresh add opens on a VALID 45 minute session ending now, keeping the long-standing 45 minute
         // default length. It used to start at `Date()` with a 45 minute duration, so the implied end was
         // always 45 minutes in the future and `buildManualRow` rejected it: the sheet opened with Save

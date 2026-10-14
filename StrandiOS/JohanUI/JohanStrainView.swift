@@ -8,10 +8,27 @@ import StrandAnalytics
 struct JohanStrainView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var profile: ProfileStore
+    @EnvironmentObject private var intelligence: IntelligenceEngine
     @StateObject private var today = JohanHomeModel()
     @StateObject private var model = JohanStrainModel()
     @ScaledMetric(relativeTo: .body) private var iconTile: CGFloat = 32
     @State private var openWorkout: JohanStrainModel.Workout?
+    @State private var loggingSport: QuickSport?
+
+    /// One-tap entries that open the manual workout sheet with the sport pre-filled. `sport` is the
+    /// catalogue name (`WorkoutCatalog`), stored verbatim, so it must match the catalogue spelling.
+    private struct QuickSport: Identifiable {
+        let sport: String
+        let title: LocalizedStringKey
+        let symbol: String
+        var id: String { sport }
+    }
+
+    private static let quickSports: [QuickSport] = [
+        QuickSport(sport: "Running", title: "Running", symbol: "figure.run"),
+        QuickSport(sport: "Padel", title: "Padel", symbol: "figure.racquetball"),
+        QuickSport(sport: "Tennis", title: "Tennis", symbol: "figure.tennis"),
+    ]
 
     var body: some View {
         GeometryReader { geo in
@@ -33,6 +50,17 @@ struct JohanStrainView: View {
             // Done item, large detent first.
             NavigationStack { WorkoutDetailView(row: w.row).environmentObject(repo) }
                 .noopSheetPresentation(largeFirst: true)
+        }
+        .sheet(item: $loggingSport) { quick in
+            // The same sheet and save path as WorkoutsView's "+", with the Sport field pre-filled.
+            ManualWorkoutSheet(initialSport: quick.sport) { row, replacing in
+                Task {
+                    await repo.saveManualWorkout(row, replacing: replacing)
+                    // Rescore from the strap's HR for the window now, as WorkoutsView does (#598).
+                    await intelligence.analyzeRecent()
+                    await reload()
+                }
+            }
         }
         .task { await reload() }
         .onReceive(repo.$days.dropFirst()) { _ in Task { await reload() } }
@@ -139,16 +167,46 @@ struct JohanStrainView: View {
                         if w.id != model.workouts.last?.id { Divider().overlay(JohanTheme.cardBorder) }
                     }
                 }
+                quickLogRow
                 NavigationLink {
                     WorkoutsView()
                         .background(JohanTheme.background.ignoresSafeArea())
                         .navigationBarTitleDisplayMode(.inline)
                 } label: {
-                    Label("All workouts", systemImage: "figure.run")
+                    Label("All workouts", systemImage: "list.bullet")
                         .font(.system(.subheadline, weight: .semibold))
                         .foregroundStyle(JohanTheme.strainBlue)
                 }
             }
+        }
+    }
+
+    /// "Log" followed by one capsule per quick sport. Wraps to the next line at large text sizes.
+    private var quickLogRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { quickLogLabel; quickLogButtons }
+            VStack(alignment: .leading, spacing: 8) {
+                quickLogLabel
+                HStack(spacing: 8) { quickLogButtons }
+            }
+        }
+    }
+
+    private var quickLogLabel: some View {
+        Text("Log").font(.system(.subheadline, weight: .semibold)).foregroundStyle(JohanTheme.textSecondary)
+    }
+
+    @ViewBuilder private var quickLogButtons: some View {
+        ForEach(Self.quickSports) { quick in
+            Button { loggingSport = quick } label: {
+                Label(quick.title, systemImage: quick.symbol)
+                    .font(.system(.footnote, weight: .semibold))
+                    .foregroundStyle(JohanTheme.strainBlue)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Capsule().fill(JohanTheme.strainBlue.opacity(0.16)))
+            }
+            .buttonStyle(JohanPressStyle())
+            .accessibilityLabel(Text("Log \(Text(quick.title))"))
         }
     }
 
