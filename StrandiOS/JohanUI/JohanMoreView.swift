@@ -11,6 +11,11 @@ struct JohanMoreView: View {
     @ScaledMetric(relativeTo: .body) private var tileSize: CGFloat = 30
     /// The app-wide language choice (`AppLanguage`, the same setting as Settings → Language).
     @AppStorage(AppLanguage.storageKey) private var appLanguageRaw = AppLanguage.english.rawValue
+    /// The three Live Activity switches, on the SAME keys as Settings → Live notifications, so the two screens
+    /// cannot disagree.
+    @AppStorage(UnitPrefs.liveActivityKey) private var liveHREnabled = true
+    @AppStorage(UnitPrefs.liftLiveActivityKey) private var liftActivityEnabled = true
+    @AppStorage(UnitPrefs.syncLiveActivityKey) private var syncActivityEnabled = true
 
     private struct Row: Identifiable {
         let id: String
@@ -92,6 +97,7 @@ struct JohanMoreView: View {
                 }
                 Text("Turning it off brings back the original NOOP interface right away.")
                     .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                liveActivitiesSection.padding(.top, 8)
                 languageSection.padding(.top, 8)
             }
             .tabRouteDestinations()
@@ -107,6 +113,47 @@ struct JohanMoreView: View {
                 .accessibilityLabel("Close")
             }
         }
+    }
+
+    // MARK: Live Activities
+
+    /// One switch per Live Activity the app has. A switch only hides its banner. Off ends the heart rate banner at
+    /// once and a Lift Log banner at its next update; a sync banner already up runs to its end, and none starts after.
+    @ViewBuilder
+    private var liveActivitiesSection: some View {
+        JohanOverline(String(localized: "Live notifications"))
+        JohanCard(padding: 0) {
+            VStack(spacing: 0) {
+                liveActivityToggle("Live heart rate", "heart.fill", tint: JohanTheme.recoveryRed,
+                                   detail: "While the strap is connected.", isOn: $liveHREnabled)
+                rowDivider
+                liveActivityToggle("Lift Log session", "dumbbell.fill", tint: JohanTheme.strainBlue,
+                                   detail: "Your set, rest and heart rate, and the Lock Screen light-up on a double-tap.",
+                                   isOn: $liftActivityEnabled)
+                rowDivider
+                liveActivityToggle("Strap sync", "arrow.triangle.2.circlepath", tint: Self.neutral,
+                                   detail: "Progress while NOOP pulls history from the strap.", isOn: $syncActivityEnabled)
+            }
+        }
+        Text("Shown on the Lock Screen and in the Dynamic Island. A switch only hides one: NOOP still measures and records everything.")
+            .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+    }
+
+    private func liveActivityToggle(_ title: LocalizedStringKey, _ icon: String, tint: Color,
+                                    detail: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 14) {
+                iconTile(icon, tint: tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(.body)).foregroundStyle(JohanTheme.textPrimary)
+                    Text(detail).font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        // As with the interface switch: the shell tints white, and a white switch on a dark card reads as off.
+        .tint(JohanTheme.sleepViolet)
+        .padding(.horizontal, 16).padding(.vertical, 10).frame(minHeight: 52)
     }
 
     // MARK: Language
