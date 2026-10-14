@@ -58,7 +58,7 @@ struct JohanDayMath {
 
 // MARK: - Month calendar
 
-/// Month sheet behind the Home title: every day as a recovery ring around its date, months paged by swipe
+/// Month sheet behind the Home title: every day as its recovery, sleep and strain rings over its date, months paged by swipe
 /// or the chevrons, a summary of the month's recovery zones underneath. Picking a day jumps Home to it.
 struct JohanMonthCalendar: View {
     @ObservedObject var model: JohanHomeModel
@@ -95,7 +95,7 @@ struct JohanMonthCalendar: View {
         .padding(.top, 22)
         .padding(.bottom, 12)
         .background(JohanTheme.background.ignoresSafeArea())
-        .presentationDetents([.height(560), .large])
+        .presentationDetents([.height(640), .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(JohanTheme.background)
         .presentationCornerRadius(32)
@@ -132,50 +132,53 @@ struct JohanMonthCalendar: View {
     }
 
     private func grid(_ days: [Date?], math: JohanDayMath) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 10) {
             ForEach(days.indices, id: \.self) { i in
                 if let date = days[i] {
                     dayCell(date, offset: math.offset(of: date), math: math)
                 } else {
-                    Color.clear.frame(height: 44)
+                    Color.clear.frame(height: 60)
                 }
             }
         }
     }
 
+    /// One day: its recovery, sleep and strain rings (the Home hero in miniature) over the date. The chosen
+    /// day's date sits in a white pill; today's is outlined.
     private func dayCell(_ date: Date, offset: Int, math: JohanDayMath) -> some View {
         let available = offset >= 0 && offset <= maxOffset
         let selected = offset == model.dayOffset
         let isToday = offset == 0
         let rings = model.rings(for: model.dayKey(offset: offset))
-        let zone = rings.recovery.map(JohanTheme.RecoveryZone.init)
+        let recColor = rings.recovery.map { JohanTheme.RecoveryZone($0).color } ?? JohanTheme.textTertiary
         return Button {
             onSelect(offset)
             dismiss()
         } label: {
-            ZStack {
-                if selected {
-                    Circle().fill(JohanTheme.textPrimary).padding(5)
-                }
-                if available, let rec = rings.recovery, let zone {
-                    Circle().stroke(zone.color.opacity(0.2), lineWidth: 3)
-                    Circle().trim(from: 0, to: rec / 100)
-                        .stroke(zone.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                } else if available {
-                    Circle().stroke(JohanTheme.track, lineWidth: 3)
+            VStack(spacing: 4) {
+                if available {
+                    JohanActivityRings(rings: [
+                        .init(fraction: rings.recovery.map { $0 / 100 }, color: recColor),
+                        .init(fraction: rings.sleepPct.map { $0 / 100 }, color: JohanTheme.sleepViolet),
+                        .init(fraction: rings.strain21.map { $0 / 21 }, color: JohanTheme.strainBlue),
+                    ], size: 38, lineWidth: 4.4, spacing: 0.9)
+                } else {
+                    Color.clear.frame(width: 38, height: 38)
                 }
                 Text(math.dayNumber(date))
-                    .font(.system(.subheadline, design: .rounded, weight: selected || isToday ? .bold : .medium))
+                    .font(.system(.caption, design: .rounded, weight: selected || isToday ? .bold : .medium))
                     .monospacedDigit()
                     .foregroundStyle(selected ? JohanTheme.background
                                      : available ? JohanTheme.textPrimary : JohanTheme.textTertiary.opacity(0.6))
-                if isToday && !selected {
-                    Circle().fill(JohanTheme.textPrimary).frame(width: 4, height: 4).offset(y: 13)
-                }
+                    .frame(minWidth: 24, minHeight: 18)
+                    .background {
+                        if selected {
+                            Capsule().fill(JohanTheme.textPrimary)
+                        } else if isToday {
+                            Capsule().strokeBorder(JohanTheme.textSecondary, lineWidth: 1)
+                        }
+                    }
             }
-            .padding(3)
-            .frame(height: 44)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
