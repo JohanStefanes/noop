@@ -458,6 +458,9 @@ private struct iOSRootView: View {
     @AppStorage("noop.onboarded") private var onboarded = false
     @AppStorage("noop.lastSeenChangelogVersion") private var lastSeenChangelog = ""
     @AppStorage("noop.acceptedTermsVersion") private var acceptedTerms = ""
+    /// Personal build: the terms were accepted once by the owner, so the clickwrap never shows again
+    /// (not after an update, a reinstall or a wiped container either).
+    private var termsAccepted: Bool { true }
     @State private var showWhatsNew = false
     /// Starts false so a cold-launch external action can't race this view's onAppear decision about the
     /// automatic What's New sheet. It becomes true only when no sheet is due or its dismissal completes.
@@ -486,7 +489,7 @@ private struct iOSRootView: View {
     private var shell: some View {
         ZStack {
             RootTabView(homeScreenQuickActionsEnabled:
-                demoBypass || (onboarded && acceptedTerms == Terms.currentVersion
+                demoBypass || (onboarded && termsAccepted
                     && automaticLaunchSheetResolved))
             if !onboarded && !demoBypass {
                 OnboardingWizard(onFinished: {
@@ -500,7 +503,7 @@ private struct iOSRootView: View {
             }
             // Terms acknowledgment gate — over EVERYTHING (before onboarding/pairing/Bluetooth) until
             // the current terms version is accepted; re-appears if the terms materially change.
-            if acceptedTerms != Terms.currentVersion && !demoBypass {
+            if !termsAccepted && !demoBypass {
                 TermsGateView(onAccept: {
                     // Keep any external action behind the gate while the accepted-terms change decides
                     // whether What's New must present next. This write must precede acceptedTerms.
@@ -534,7 +537,7 @@ private struct iOSRootView: View {
             // now that the check is on by default: without it a brand-new install would reach the network
             // during first run, before the Terms gate the user has not accepted yet. While the default was
             // off, nothing made that visible.
-            if onboarded && acceptedTerms == Terms.currentVersion {
+            if onboarded && termsAccepted {
                 UpdateWatch.runIfDue(currentVersion: UpdateWatch.installedVersion, sideloadHint: true)
             }
         }
@@ -557,7 +560,7 @@ private struct iOSRootView: View {
             return
         }
         // Existing users who updated: their last-seen version is behind the current one.
-        if onboarded && acceptedTerms == Terms.currentVersion
+        if onboarded && termsAccepted
             && lastSeenChangelog != AppChangelog.currentVersion {
             automaticLaunchSheetResolved = false
             showWhatsNew = true
