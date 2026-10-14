@@ -10,8 +10,7 @@ import StrandDesign
 
 /// Circular score dial. The arc sweeps from 0 with a spring on first appearance, whenever `replayKey`
 /// changes (day change), and from the current position when `fraction` changes. The number counts up in
-/// step (StrandDesign `CountUpText`), a soft glow dot rides the arc's end cap and, if requested, a light
-/// haptic fires when the sweep settles.
+/// step (StrandDesign `CountUpText`) and, if requested, a light haptic fires when the sweep settles.
 struct JohanDial: View {
     let title: String
     /// nil draws the empty track and an en dash.
@@ -25,6 +24,9 @@ struct JohanDial: View {
     var size: CGFloat = JohanTheme.Metrics.dialSize
     /// Number size relative to the dial diameter.
     var numberScale: CGFloat = 0.30
+    /// False hides the caption under the ring when the text right below already names it (Home hero +
+    /// verdict). VoiceOver still announces `title`.
+    var showsTitle = true
 
     @State private var progress = 0.0
     @State private var lastReplay: Int?
@@ -34,23 +36,21 @@ struct JohanDial: View {
 
     var body: some View {
         let lw = max(JohanTheme.Metrics.dialLineMin, size * JohanTheme.Metrics.dialLineFraction)
+        let major = size * 0.055
+        // The arc sits inside the bezel of ticks, with a hair of air between them.
+        let arcInset = major + size * 0.035 + lw / 2
         VStack(spacing: 8) {
             ZStack {
-                Circle().stroke(JohanTheme.track, lineWidth: lw)
-                Circle()
+                // Bezel: every tick dim, then the ticks up to the value lit in the dial's colour.
+                JohanDialTicks(limit: 1, size: size).stroke(JohanTheme.tick, lineWidth: max(1, size * 0.008))
+                JohanDialTicks(limit: progress, size: size)
+                    .stroke(color.opacity(0.75), lineWidth: max(1, size * 0.008))
+                Circle().inset(by: arcInset).stroke(JohanTheme.track, lineWidth: lw)
+                Circle().inset(by: arcInset)
                     .trim(from: 0, to: max(0.001, progress))
                     .stroke(color, style: StrokeStyle(lineWidth: lw, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .opacity(progress > 0.001 ? 1 : 0)
-                // Glow dot on the end cap.
-                if progress > 0.004 {
-                    ZStack {
-                        Circle().fill(color).frame(width: lw * 1.9, height: lw * 1.9).blur(radius: 5).opacity(0.85)
-                        Circle().fill(.white).frame(width: lw * 0.42, height: lw * 0.42)
-                    }
-                    .offset(y: -size / 2)
-                    .rotationEffect(.degrees(progress * 360))
-                }
                 VStack(spacing: 0) {
                     Group {
                         if let value {
@@ -66,16 +66,18 @@ struct JohanDial: View {
                     }
                     if value != nil, let unitText {
                         Text(unitText).font(JohanTheme.Fonts.unit).foregroundStyle(JohanTheme.textSecondary)
+                            // Sits inside the fixed-size ring; the dial's value is also spoken via accessibilityValue.
+                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     }
                 }
             }
             .frame(width: size, height: size)
-            JohanOverline(title)
+            if showsTitle { JohanOverline(title) }
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(title))
-        .accessibilityValue(Text(value.map(format) ?? "kein Wert"))
+        .accessibilityValue(Text(value.map(format) ?? String(localized: "no value")))
         .task(id: SweepKey(replay: replayKey, target: fraction)) { await sweep() }
     }
 
@@ -95,11 +97,40 @@ struct JohanDial: View {
     }
 }
 
+/// The bezel of a `JohanDial`: 60 ticks like a watch chapter ring, longer at the quarters. `limit`
+/// (0...1) keeps only the ticks up to that share of the turn and animates with the arc's sweep.
+struct JohanDialTicks: Shape {
+    var limit: Double
+    let size: CGFloat
+    var count = 60
+
+    var animatableData: Double {
+        get { limit }
+        set { limit = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let outer = min(rect.width, rect.height) / 2
+        let lit = Int((max(0, min(1, limit)) * Double(count)).rounded(.down))
+        guard lit > 0 || limit >= 1 else { return p }
+        for i in 0..<(limit >= 1 ? count : lit + 1) {
+            let isMajor = i % (count / 4) == 0
+            let len = isMajor ? size * 0.055 : size * 0.03
+            let a = Double(i) / Double(count) * 2 * .pi - .pi / 2
+            let dx = CGFloat(cos(a)), dy = CGFloat(sin(a))
+            p.move(to: CGPoint(x: c.x + dx * (outer - len), y: c.y + dy * (outer - len)))
+            p.addLine(to: CGPoint(x: c.x + dx * outer, y: c.y + dy * outer))
+        }
+        return p
+    }
+}
+
 // MARK: - Calibration ring
 
-/// Progress ring for the calibration state: the fill animates to `fraction`, and while the motion gate is
-/// open a soft highlight rotates around the filled arc (a rotating angular gradient masked to the arc,
-/// driven by Core Animation, not per-frame view updates).
+/// Progress ring for the calibration state, drawn with the same instrument geometry as `JohanDial`
+/// (tick bezel, fine arc) so the calibrating Home reads as the same family as the scored one.
 struct JohanCalibrationRing: View {
     let fraction: Double
     let day: Int
@@ -107,39 +138,31 @@ struct JohanCalibrationRing: View {
     var size: CGFloat = 112
 
     @State private var progress = 0.0
-    @State private var spin = 0.0
     private let motion = JohanStill()
 
     var body: some View {
         let lw = max(JohanTheme.Metrics.dialLineMin, size * JohanTheme.Metrics.dialLineFraction)
+        let arcInset = size * 0.055 + size * 0.035 + lw / 2
         ZStack {
-            Circle().stroke(JohanTheme.track, lineWidth: lw)
-            Circle()
+            JohanDialTicks(limit: 1, size: size).stroke(JohanTheme.tick, lineWidth: max(1, size * 0.008))
+            JohanDialTicks(limit: progress, size: size)
+                .stroke(JohanTheme.recoveryGreen.opacity(0.75), lineWidth: max(1, size * 0.008))
+            Circle().inset(by: arcInset).stroke(JohanTheme.track, lineWidth: lw)
+            Circle().inset(by: arcInset)
                 .trim(from: 0, to: max(0.001, progress))
                 .stroke(JohanTheme.recoveryGreen, style: StrokeStyle(lineWidth: lw, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            if !motion.isStill {
-                Circle()
-                    .stroke(AngularGradient(colors: [.clear, .white.opacity(0.55), .clear, .clear],
-                                            center: .center), lineWidth: lw)
-                    .rotationEffect(.degrees(spin))
-                    .mask(Circle().trim(from: 0, to: max(0.001, progress))
-                        .stroke(style: StrokeStyle(lineWidth: lw, lineCap: .round))
-                        .rotationEffect(.degrees(-90)))
-                    .animation(.linear(duration: JohanTheme.Motion.shimmerPeriod).repeatForever(autoreverses: false),
-                               value: spin)
-                    .allowsHitTesting(false)
-            }
-            VStack(spacing: 0) {
-                Text("Tag").font(.system(size: max(11, size * 0.075), weight: .medium)).foregroundStyle(JohanTheme.textSecondary)
-                Text("\(day)/\(total)").font(JohanTheme.number(size * 0.26))
+            VStack(spacing: 2) {
+                Text("Day").font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                Text("\(day)/\(total)").font(JohanTheme.number(size * 0.24))
+                    .foregroundStyle(JohanTheme.textPrimary)
             }
         }
         .frame(width: size, height: size)
         .onAppear {
             if motion.isStill { progress = fraction; return }
             withAnimation(JohanTheme.Motion.ringFill) { progress = fraction }
-            spin = 360
         }
         .onChange(of: fraction) { _, new in
             if motion.isStill { progress = new } else { withAnimation(JohanTheme.Motion.ringFill) { progress = new } }
@@ -211,40 +234,82 @@ struct JohanSparkline: View {
 
 // MARK: - Target strain band
 
-/// 0-21 track with the target band and the current-strain marker. The band fades in first, then the
-/// marker springs from the start of the track to its value.
+/// Strain gauge on the 0-21 axis: the day's Effort fills from the left, the recovery-based target range
+/// sits on the track as a framed segment, and a scale underneath names 0, the range bounds and 21, so the
+/// bar reads without the sentence beside it.
 struct JohanTargetBand: View {
     let band: ClosedRange<Int>
     let current: Double?
     let color: Color
-    @State private var bandShown = false
-    @State private var markerShown = false
+    @State private var shown = false
     private let motion = JohanStill()
+    private let maxValue = 21.0
+    private let barHeight: CGFloat = 10
 
     var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            ZStack(alignment: .leading) {
-                Capsule().fill(JohanTheme.track)
-                Capsule().fill(color.opacity(0.35))
-                    .frame(width: w * CGFloat(band.upperBound - band.lowerBound) / 21)
-                    .offset(x: w * CGFloat(band.lowerBound) / 21)
-                    .opacity(bandShown ? 1 : 0)
-                if let current {
-                    Capsule().fill(JohanTheme.strainBlue)
-                        .frame(width: 4, height: 14)
-                        .offset(x: markerShown ? max(0, min(w - 4, w * CGFloat(current / 21) - 2)) : 0)
-                        .opacity(markerShown ? 1 : 0)
-                        .animation(JohanTheme.Motion.markerSpring, value: current)
+        VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                let x = { (v: Double) in w * CGFloat(min(max(v, 0), maxValue) / maxValue) }
+                ZStack(alignment: .leading) {
+                    Capsule().fill(JohanTheme.track)
+                    // Target range: tinted fill plus a crisp outline, so it stays visible under the progress.
+                    RoundedRectangle(cornerRadius: barHeight / 2, style: .continuous)
+                        .fill(color.opacity(0.28))
+                        .overlay(RoundedRectangle(cornerRadius: barHeight / 2, style: .continuous)
+                            .stroke(color.opacity(0.9), lineWidth: 1.5))
+                        .frame(width: x(Double(band.upperBound)) - x(Double(band.lowerBound)))
+                        .offset(x: x(Double(band.lowerBound)))
+                    if let current {
+                        Capsule().fill(JohanTheme.strainBlue)
+                            .frame(width: max(barHeight, shown ? x(current) : barHeight))
+                        Circle().fill(JohanTheme.textPrimary)
+                            .frame(width: barHeight + 6, height: barHeight + 6)
+                            .shadow(color: .black.opacity(0.4), radius: 2)
+                            .offset(x: max(0, min(w - barHeight - 6, (shown ? x(current) : 0) - (barHeight + 6) / 2)))
+                    }
                 }
             }
+            .frame(height: barHeight + 6)
+            .animation(motion.isStill ? nil : JohanTheme.Motion.markerSpring, value: current)
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .topLeading) {
+                    scaleLabel("0", at: 0, width: w, anchor: .leading)
+                    scaleLabel("\(band.lowerBound)", at: Double(band.lowerBound), width: w, anchor: .center, emphasised: true)
+                    scaleLabel("\(band.upperBound)", at: Double(band.upperBound), width: w, anchor: .center, emphasised: true)
+                    scaleLabel("21", at: maxValue, width: w, anchor: .trailing)
+                }
+            }
+            .frame(height: 16)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         }
-        .frame(height: 14)
         .onAppear {
-            if motion.isStill { bandShown = true; markerShown = true; return }
-            withAnimation(JohanTheme.Motion.bandFade) { bandShown = true }
-            withAnimation(JohanTheme.Motion.markerSpring.delay(JohanTheme.Motion.markerDelay)) { markerShown = true }
+            if motion.isStill { shown = true; return }
+            withAnimation(JohanTheme.Motion.markerSpring.delay(JohanTheme.Motion.markerDelay)) { shown = true }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Target range \(String(band.lowerBound)) to \(String(band.upperBound)) of 21"))
+        .accessibilityValue(current.map { String(localized: "now \(String(format: "%.1f", $0))") } ?? String(localized: "no strain yet"))
+    }
+
+    private enum Anchor { case leading, center, trailing }
+
+    private func scaleLabel(_ text: String, at value: Double, width: CGFloat, anchor: Anchor,
+                            emphasised: Bool = false) -> some View {
+        let x = width * CGFloat(value / maxValue)
+        let labelWidth: CGFloat = 28
+        let offset: CGFloat
+        switch anchor {
+        case .leading: offset = 0
+        case .center: offset = min(max(0, x - labelWidth / 2), width - labelWidth)
+        case .trailing: offset = width - labelWidth
+        }
+        return Text(text)
+            .font(.system(.caption2, weight: emphasised ? .semibold : .regular).monospacedDigit())
+            .foregroundStyle(emphasised ? color : JohanTheme.textTertiary)
+            .frame(width: labelWidth, alignment: anchor == .leading ? .leading : anchor == .trailing ? .trailing : .center)
+            .offset(x: offset)
     }
 }
 
@@ -282,46 +347,97 @@ struct JohanDivergingBar: View {
     }
 }
 
-/// Vertical bars that grow up from the baseline one after another.
+/// Vertical bars that grow up from the baseline one after another. A nil value is a day without data and
+/// draws no bar, so it cannot be mistaken for a measured zero. Each bar carries its x label and its real
+/// (not mid-animation) value for VoiceOver.
 struct JohanGrowBars: View {
-    let values: [Double]
+    struct Bar {
+        /// Short axis label, e.g. a weekday initial.
+        let label: String
+        /// Spoken label, e.g. the full date.
+        let spokenLabel: String
+        let value: Double?
+    }
+
+    let bars: [Bar]
     let color: Color
-    var formatAxis: (Double) -> String
+    /// Spoken value text, unit included where it helps ("4,2", "1 Std. 10 Min.").
+    var formatValue: (Double) -> String
+    /// Y-axis tick text; `formatValue` when nil.
+    var formatAxis: ((Double) -> String)?
     @State private var factors: [Double] = []
     private let motion = JohanStill()
 
     var body: some View {
-        let top = max(values.max() ?? 1, 1) * 1.1
+        let top = max(bars.compactMap(\.value).max() ?? 1, 1) * 1.1
         Chart {
-            ForEach(Array(values.enumerated()), id: \.offset) { i, v in
-                BarMark(x: .value("Nacht", i), y: .value("Min.", v * (factors.indices.contains(i) ? factors[i] : 0)))
-                    .foregroundStyle(color.gradient)
-                    .cornerRadius(3)
+            ForEach(Array(bars.enumerated()), id: \.offset) { i, bar in
+                if let v = bar.value {
+                    BarMark(x: .value("Day", i), y: .value("Value", v * (factors.indices.contains(i) ? factors[i] : 0)))
+                        .foregroundStyle(color)
+                        .cornerRadius(3)
+                        .accessibilityLabel(bar.spokenLabel)
+                        .accessibilityValue(formatValue(v))
+                }
             }
         }
+        .chartXScale(domain: -0.5...(Double(max(bars.count, 1)) - 0.5))
         .chartYScale(domain: 0...top)
-        .chartXAxis(.hidden)
+        .chartXAxis {
+            AxisMarks(values: Array(bars.indices)) { v in
+                AxisValueLabel(centered: true) {
+                    if let i = v.as(Int.self), bars.indices.contains(i) {
+                        Text(bars[i].label).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                    }
+                }
+            }
+        }
         .chartYAxis {
             AxisMarks(position: .leading) { v in
                 AxisGridLine().foregroundStyle(JohanTheme.track)
                 AxisValueLabel {
                     if let m = v.as(Double.self) {
-                        Text(formatAxis(m)).font(.system(size: 10)).foregroundStyle(JohanTheme.textTertiary)
+                        Text((formatAxis ?? formatValue)(m)).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
                     }
                 }
             }
         }
+        // Axis labels are secondary to the bars and the headline figure above the chart; past xxxLarge they
+        // would crowd the plot, and each bar's value is spoken by VoiceOver anyway.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .onAppear { grow() }
-        .onChange(of: values.count) { _, _ in grow() }
+        .onChange(of: bars.count) { _, _ in grow() }
     }
 
     private func grow() {
-        if motion.isStill { factors = Array(repeating: 1, count: values.count); return }
-        factors = Array(repeating: 0, count: values.count)
-        for i in values.indices {
+        if motion.isStill { factors = Array(repeating: 1, count: bars.count); return }
+        factors = Array(repeating: 0, count: bars.count)
+        for i in bars.indices {
             withAnimation(JohanTheme.Motion.barGrow.delay(Double(i) * JohanTheme.Motion.barStagger)) {
                 if factors.indices.contains(i) { factors[i] = 1 }
             }
+        }
+    }
+}
+
+extension JohanGrowBars.Bar {
+    private static let parser: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// Bar for a `YYYY-MM-DD` day key: weekday initial on the axis, full date for VoiceOver.
+    init(dayKey: String, value: Double?) {
+        let locale = AppLanguage.activeLocale
+        if let date = Self.parser.date(from: dayKey) {
+            self.init(label: String(date.formatted(.dateTime.weekday(.narrow).locale(locale))),
+                      spokenLabel: date.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(locale)),
+                      value: value)
+        } else {
+            self.init(label: "", spokenLabel: dayKey, value: value)
         }
     }
 }
@@ -343,5 +459,96 @@ private struct JohanRevealLeadingToTrailing: ViewModifier {
 extension View {
     /// Wipes the view in from left to right on first appearance.
     func johanRevealLeftToRight() -> some View { modifier(JohanRevealLeadingToTrailing()) }
+}
+#endif
+
+#if os(iOS)
+// MARK: - Loading placeholder
+
+/// Card-shaped stand-in shown while a screen's first load runs, so the layout appears at once instead of a
+/// spinner or a gap. Pulses gently unless the motion gate is closed. Hidden from VoiceOver except for a
+/// single "Lädt" element.
+struct JohanPlaceholderCard: View {
+    var height: CGFloat = 140
+    @State private var dim = false
+    private let motion = JohanStill()
+
+    var body: some View {
+        JohanCard {
+            VStack(alignment: .leading, spacing: 12) {
+                bar(width: 90, height: 10)
+                bar(width: 160, height: 28)
+                Spacer(minLength: 0)
+                bar(width: nil, height: 10)
+                bar(width: 200, height: 10)
+            }
+            .frame(height: height, alignment: .topLeading)
+            .opacity(dim ? 0.45 : 1)
+        }
+        .onAppear {
+            guard !motion.isStill else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
+    }
+
+    private func bar(width: CGFloat?, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+            .fill(JohanTheme.track)
+            .frame(maxWidth: width ?? .infinity, alignment: .leading)
+            .frame(width: width, height: height)
+    }
+}
+#endif
+
+#if os(iOS)
+// MARK: - Waiting for live heart rate
+
+/// Shown in the live HR card while the strap is connected but its first live sample has not arrived:
+/// one ECG-style beat traced left to right, over and over, so the seconds the strap takes to start
+/// streaming read as "working", not "broken". Purely presentational; it shows no value. Still (a flat
+/// dim trace) when the motion gate is closed.
+struct JohanHRSearching: View {
+    var color: Color = JohanTheme.recoveryRed
+    @State private var phase: CGFloat = 0
+    private let motion = JohanStill()
+
+    /// One beat across the width: flat, a small P bump, the QRS spike, a T bump, flat.
+    private struct Beat: Shape {
+        func path(in rect: CGRect) -> Path {
+            let w = rect.width, h = rect.height, mid = rect.midY
+            let pts: [(CGFloat, CGFloat)] = [
+                (0, 0), (0.22, 0), (0.27, -0.12), (0.32, 0), (0.40, 0), (0.43, 0.18),
+                (0.47, -0.95), (0.51, 0.45), (0.55, 0), (0.66, 0), (0.73, -0.22), (0.80, 0), (1, 0)
+            ]
+            var p = Path()
+            for (i, pt) in pts.enumerated() {
+                let point = CGPoint(x: pt.0 * w, y: mid + pt.1 * h / 2)
+                if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+            }
+            return p
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Beat().stroke(JohanTheme.track, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            if !motion.isStill {
+                // A short bright segment runs along the beat, fading at its tail.
+                Beat()
+                    .trim(from: max(0, phase - 0.28), to: phase)
+                    .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .shadow(color: color.opacity(0.6), radius: 4)
+            }
+        }
+        .frame(height: 30)
+        .onAppear {
+            guard !motion.isStill else { return }
+            phase = 0
+            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { phase = 1.28 }
+        }
+        .accessibilityHidden(true)
+    }
 }
 #endif

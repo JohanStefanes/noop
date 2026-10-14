@@ -2,6 +2,7 @@
 import Foundation
 import StrandAnalytics
 import WhoopStore
+import WhoopProtocol
 
 /// Read model behind the JohanUI Home screen. All numbers come from existing owners:
 /// `Repository.days` / `Repository.today` (stored daily rows), `Repository.chargeBaselines` (personal
@@ -33,12 +34,20 @@ final class JohanHomeModel: ObservableObject {
         var restingHR = Vital()
         var resp = Vital()
         var targetBand: ClosedRange<Int>?
+        /// What shaped the recovery score, from the engine's own scoring (`ChargeBreakdownWiring`, the
+        /// same call the original Today and Coupled sheets make). nil while the night cannot honestly
+        /// score (no usable HRV baseline, or no HRV / resting HR).
+        var drivers: [ChargeDriver]?
+        var confidence: ScoreConfidence?
     }
 
     /// 0 = today, 1 = yesterday, ...
     @Published var dayOffset = 0
     @Published private(set) var snapshot = Snapshot()
     @Published private(set) var loaded = false
+    /// The newest heart-rate sample already stored for today, so the live card has an honest number to
+    /// show (dimmed, with its age) during the seconds the strap takes to start streaming.
+    @Published private(set) var lastStoredHR: HRSample?
 
     let calibrationLength = Baselines.minNightsSeed
 
@@ -88,6 +97,7 @@ final class JohanHomeModel: ObservableObject {
             let now = Int(Date().timeIntervalSince1970)
             // Whole-window read with an explicit limit (a day banks ~18k HR rows), as the liquid Today does.
             let hr = await repo.hrSamples(from: start, to: now, limit: 200_000)
+            if let last = hr.last(where: { (30...220).contains($0.bpm) }), last != lastStoredHR { lastStoredHR = last }
             let maxHR = profile.effortHRmax
             let restHR = row?.restingHr.map(Double.init) ?? StrainScorer.defaultRestingHR
             let method = PuffinExperiment.effortMethod
@@ -128,6 +138,12 @@ final class JohanHomeModel: ObservableObject {
         s.resp = Vital(value: row?.respRateBpm ?? respRow?.respRateBpm,
                        baseline: isToday ? usable(baselines?.resp) : nil)
         s.targetBand = CoupledView.optimalStrainRange(recovery: row?.recovery)
+        // The Sleep row scores against the same sleep figure the Schlaf dial on this screen shows.
+        if let row, row.recovery != nil, let baselines,
+           let breakdown = ChargeBreakdownWiring.breakdown(baselines: baselines, row: row, sleepPerfPercent: sleepPct) {
+            s.drivers = breakdown.drivers
+            s.confidence = breakdown.confidence
+        }
         if s != snapshot { snapshot = s }
     }
 

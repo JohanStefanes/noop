@@ -5592,6 +5592,26 @@ public final class BLEManager: NSObject, ObservableObject {
         log("Buzz: one-shot fired (patternId=2 loops=3 + runAlarm, acked)")
     }
 
+    /// One burst of a user-chosen alarm buzz pattern: the same acknowledged RUN_HAPTICS_PATTERN write as
+    /// `buzzStrapOnce`, with the pulse count as the caller's (clamped to 1...8, the range measured on a
+    /// 5/MG, #926; on a 5/MG send() remaps it to the maverick notify buzz with that repeat count), and the
+    /// RUN_ALARM follow-up only when `strapAlarmSignal` asks for it. No new command or payload shape: both
+    /// writes and their bodies are the ones `buzzStrapOnce` already sends.
+    func buzzBurst(pulses: Int, strapAlarmSignal: Bool) {
+        let loops = UInt8(min(max(pulses, 1), 8))
+        send(.runHapticsPattern, payload: [2, loops, 0, 0, 0], writeType: .withResponse)
+        guard strapAlarmSignal else {
+            log("Buzz: burst of \(loops) (acked)")
+            return
+        }
+        if selectedModel.deviceFamily == .whoop5 {
+            send(.runAlarm, payload: AlarmPayload.runAlarmRev2(), writeType: .withResponse)
+        } else {
+            send(.runAlarm, payload: [0x01], writeType: .withResponse)
+        }
+        log("Buzz: burst of \(loops) + runAlarm (acked)")
+    }
+
     /// Haptic Clock (#460): buzz the current wall-clock time out on the strap so the user can read it
     /// off their wrist without a screen. The pure, unit-tested `HapticClock` encoder turns now into an
     /// ordered pulse list (long = a "ten", short = a "unit", in HH-tens / HH-units / MM-tens / MM-units

@@ -102,9 +102,9 @@ final class JohanSleepCoachModel: ObservableObject {
                                                        durationHours: durationMin / 60) else { return nil }
         let off = Int(estimate.offsetVsScheduleMinutes.rounded())
         let note: String
-        if off > 20 { note = "Deine innere Uhr läuft etwa \(off) Min. später als dein Zeitplan." }
-        else if off < -20 { note = "Deine innere Uhr läuft etwa \(-off) Min. früher als dein Zeitplan." }
-        else { note = "Deine innere Uhr passt zu deinem Zeitplan." }
+        if off > 20 { note = String(localized: "Your body clock runs about \(String(off)) min later than your schedule.") }
+        else if off < -20 { note = String(localized: "Your body clock runs about \(String(-off)) min earlier than your schedule.") }
+        else { note = String(localized: "Your body clock matches your schedule.") }
         return BodyClock(idealBedHour: w.bedHour, idealWakeHour: w.wakeHour, note: note)
     }
 }

@@ -528,6 +528,10 @@ struct RootTabView: View {
                     // ones people reach for when a strap is running down, so they get their own row.
                     MoreRow("Power saving", "battery.25", .powerSaving)
                     MoreRow("Settings", "gearshape.fill", .settings)
+                    // The way back to the personal JohanUI layer. Without it, switching JohanUI off from its
+                    // own Mehr tab left no control to switch it on again. Hidden while JohanUI hosts this
+                    // shell itself ("Komplette Original-App öffnen"), where the outer switch already exists.
+                    if !johanClassicBypass { JohanUIToggleRow(isOn: $johanUIEnabled) }
                 }
             }
             // The rows push MoreDestination VALUES so a re-tap of the More tab can pop them off the
@@ -653,6 +657,28 @@ private enum MoreDestination: Hashable {
 /// the SF Symbol icon tinted `StrandPalette.accent`, the title in the body text colour, a `Spacer`, and a
 /// trailing `chevron.right` in `textTertiary`. ~44pt min height + the card's row insets keep the whole row a
 /// comfortable tap target.
+/// More-list switch for the JohanUI layer, styled like `MoreRow`.
+private struct JohanUIToggleRow: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            HStack(spacing: 14) {
+                Image(systemName: "paintpalette.fill")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(StrandPalette.accent)
+                    .frame(width: 26, alignment: .center)
+                Text("Johan-Oberfläche")
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.textPrimary)
+            }
+        }
+        .tint(StrandPalette.accent)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+    }
+}
+
 private struct MoreRow: View {
     let title: LocalizedStringKey
     let icon: String

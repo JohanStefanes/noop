@@ -12,11 +12,12 @@ struct JohanSleepCoachView: View {
     @StateObject private var coach = JohanSleepCoachModel()
 
     var body: some View {
-        JohanScreen(title: "Schlaf") {
+        JohanScreen(title: String(localized: "Sleep")) {
             if let rec = coach.recommendation {
                 bedtimeCard(rec).johanStagger(0)
             } else {
-                ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                JohanPlaceholderCard(height: 200)
+                JohanPlaceholderCard(height: 180)
             }
             if coach.loaded {
                 nightCard.johanStagger(1)
@@ -34,29 +35,24 @@ struct JohanSleepCoachView: View {
     private func bedtimeCard(_ rec: JohanSleepCoachModel.Recommendation) -> some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 12) {
-                JohanOverline("Empfohlene Schlafenszeit heute")
+                JohanOverline(String(localized: "Recommended bedtime tonight"))
                 Text(clock(rec.bedtimeMinutes))
-                    .font(JohanTheme.number(56)).foregroundStyle(JohanTheme.sleepViolet)
-                HStack(spacing: 18) {
-                    stat("Aufstehen", clock(rec.wakeMinutes))
-                    stat("Ziel", hm(rec.targetSleepMin))
-                    stat("Bedarf", hm(rec.needMin))
-                    if rec.paybackMin >= 1 { stat("Schuld", "+" + hm(rec.paybackMin)) }
-                }
-                Text(explanation(rec)).font(.system(size: 12)).foregroundStyle(JohanTheme.textSecondary)
+                    .johanNumberFont(56).foregroundStyle(JohanTheme.sleepViolet)
+                bedtimeStats(rec)
+                Text(explanation(rec)).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
                 if let clockWindow = JohanSleepCoachModel.bodyClock(model.circadianPhase, durationMin: rec.targetSleepMin) {
                     Divider().overlay(JohanTheme.cardBorder)
-                    JohanOverline("Innere Uhr")
-                    Text("Ideales Fenster \(hourText(clockWindow.idealBedHour)) bis \(hourText(clockWindow.idealWakeHour)). \(clockWindow.note)")
-                        .font(.system(size: 13)).foregroundStyle(JohanTheme.textSecondary)
+                    JohanOverline(String(localized: "Body clock"))
+                    Text(String(localized: "Ideal window \(hourText(clockWindow.idealBedHour)) to \(hourText(clockWindow.idealWakeHour)). \(clockWindow.note)"))
+                        .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
                 }
                 NavigationLink {
                     SmartAlarmView()
                         .background(JohanTheme.background.ignoresSafeArea())
                         .navigationBarTitleDisplayMode(.inline)
                 } label: {
-                    Label("Aufstehzeit & Erinnerung anpassen", systemImage: "alarm")
-                        .font(.system(size: 14, weight: .semibold))
+                    Label("Adjust wake time & reminder", systemImage: "alarm")
+                        .font(.system(.subheadline, weight: .semibold))
                         .foregroundStyle(JohanTheme.sleepViolet)
                 }
             }
@@ -65,16 +61,40 @@ struct JohanSleepCoachView: View {
 
     private func explanation(_ rec: JohanSleepCoachModel.Recommendation) -> String {
         if rec.nightsUsed == 0 {
-            return "Noch keine Schlafdaten: Die Empfehlung nutzt den Standardbedarf von \(hm(rec.needMin)) und deine eingestellte Aufstehzeit. Sie wird genauer, sobald Nächte aufgezeichnet sind."
+            return String(localized: "No sleep data yet: the recommendation uses the default need of \(hm(rec.needMin)) and your wake time. It gets more precise once nights are recorded.")
         }
-        let extra = rec.paybackMin >= 1 ? " plus \(hm(rec.paybackMin)) zum Abbau deiner Schlafschuld" : ""
-        return "Aufstehzeit minus Schlafbedarf (\(hm(rec.needMin)))\(extra), basierend auf \(rec.nightsUsed) Nächten."
+        let nights = String(rec.nightsUsed)
+        if rec.paybackMin >= 1 {
+            return String(localized: "Wake time minus sleep need (\(hm(rec.needMin))) plus \(hm(rec.paybackMin)) to pay down your sleep debt, based on \(nights) nights.")
+        }
+        return String(localized: "Wake time minus sleep need (\(hm(rec.needMin))), based on \(nights) nights.")
+    }
+
+    private func bedtimeStats(_ rec: JohanSleepCoachModel.Recommendation) -> some View {
+        var items = [(String(localized: "Wake-up"), clock(rec.wakeMinutes)), (String(localized: "Target"), hm(rec.targetSleepMin)), (String(localized: "Need"), hm(rec.needMin))]
+        if rec.paybackMin >= 1 { items.append((String(localized: "Debt"), "+" + hm(rec.paybackMin))) }
+        return statsLayout(items)
+    }
+
+    /// One row when it fits, otherwise a two-column grid, otherwise one column (largest text sizes), so no
+    /// value is ever truncated or wrapped mid-value.
+    private func statsLayout(_ items: [(String, String)]) -> some View {
+        let pairs = stride(from: 0, to: items.count, by: 2).map { Array(items[$0..<min($0 + 2, items.count)]) }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) { ForEach(items, id: \.0) { stat($0.0, $0.1) } }
+            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
+                ForEach(pairs, id: \.first!.0) { pair in
+                    GridRow { ForEach(pair, id: \.0) { stat($0.0, $0.1) } }
+                }
+            }
+            VStack(alignment: .leading, spacing: 10) { ForEach(items, id: \.0) { stat($0.0, $0.1) } }
+        }
     }
 
     private func stat(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 11)).foregroundStyle(JohanTheme.textSecondary)
-            Text(value).font(JohanTheme.number(17)).lineLimit(1).minimumScaleFactor(0.6)
+            Text(title).font(.system(.caption2)).foregroundStyle(JohanTheme.textSecondary)
+            Text(value).johanNumberFont(17).lineLimit(1)
         }
     }
 
@@ -83,31 +103,20 @@ struct JohanSleepCoachView: View {
     private var nightCard: some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 12) {
-                JohanOverline("Letzte Nacht")
+                JohanOverline(String(localized: "Last night"))
                 if let night = coach.night {
-                    Text("\(timeText(night.start)) – \(timeText(night.end)) · \(hm(night.stages.asleep)) Schlaf")
-                        .font(.system(size: 15, weight: .semibold))
+                    Text(String(localized: "\(timeText(night.start)) – \(timeText(night.end)) · \(hm(night.stages.asleep)) asleep"))
+                        .font(.system(.subheadline, weight: .semibold))
                     Hypnogram(intervals: night.intervals, height: 130, showsStageAxis: true,
                               showsHover: false, nightStart: night.start, showsTimeAxis: true, filled: true)
                         .johanRevealLeftToRight()
-                    HStack(spacing: 14) {
-                        stageStat("Tief", night.stages.deep)
-                        stageStat("REM", night.stages.rem)
-                        stageStat("Leicht", night.stages.light)
-                        stageStat("Wach", night.stages.awake)
-                    }
+                    statsLayout([(String(localized: "Deep"), hm(night.stages.deep)), ("REM", hm(night.stages.rem)),
+                                 (String(localized: "Light"), hm(night.stages.light)), (String(localized: "Awake"), hm(night.stages.awake))])
                 } else {
-                    Text("Noch keine Nacht aufgezeichnet. Trag das Armband über Nacht, dann erscheint hier dein Schlafverlauf.")
-                        .font(.system(size: 13)).foregroundStyle(JohanTheme.textSecondary)
+                    Text("No night recorded yet. Wear the strap overnight and your sleep will show up here.")
+                        .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
                 }
             }
-        }
-    }
-
-    private func stageStat(_ title: String, _ min: Double) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 11)).foregroundStyle(JohanTheme.textSecondary)
-            Text(hm(min)).font(JohanTheme.number(15))
         }
     }
 
@@ -116,25 +125,25 @@ struct JohanSleepCoachView: View {
     private var debtCard: some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 10) {
-                JohanOverline("Schlafschuld")
+                JohanOverline(String(localized: "Sleep debt"))
                 if let ledger = coach.debt, ledger.nightCount > 0 {
                     let inDebt = ledger.isDebt && ledger.magnitudeMin >= SleepDebt.onTargetBandMin
                     HStack(alignment: .firstTextBaseline) {
-                        Text(inDebt ? hm(ledger.magnitudeMin) : "Ausgeglichen")
-                            .font(JohanTheme.number(26))
+                        Text(inDebt ? hm(ledger.magnitudeMin) : String(localized: "Balanced"))
+                            .johanNumberFont(26)
                             .foregroundStyle(inDebt ? JohanTheme.recoveryYellow : JohanTheme.recoveryGreen)
                         Spacer()
-                        Text("letzte \(ledger.nightCount) Nächte").font(.system(size: 12))
+                        Text(String(localized: "last \(String(ledger.nightCount)) nights")).font(.system(.caption))
                             .foregroundStyle(JohanTheme.textSecondary)
                     }
                     if coach.debtTrend.count >= 2 {
-                        JohanGrowBars(values: coach.debtTrend.map(\.value), color: JohanTheme.sleepViolet,
-                                      formatAxis: hm)
+                        JohanGrowBars(bars: coach.debtTrend.map { .init(dayKey: $0.day, value: $0.value) },
+                                      color: JohanTheme.sleepViolet, formatValue: hm)
                             .frame(height: 120)
                     }
                 } else {
-                    Text("Die Schlafschuld wird aus den Nächten der letzten zwei Wochen berechnet und erscheint nach der ersten aufgezeichneten Nacht.")
-                        .font(.system(size: 13)).foregroundStyle(JohanTheme.textSecondary)
+                    Text("Sleep debt is calculated from the last two weeks of nights and appears after the first recorded night.")
+                        .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
                 }
             }
         }
@@ -151,11 +160,12 @@ struct JohanSleepCoachView: View {
 
     private func hm(_ minutes: Double) -> String {
         let t = max(0, Int(minutes.rounded()))
-        return t >= 60 ? "\(t / 60) Std. \(t % 60) Min." : "\(t) Min."
+        let h = String(t / 60), m = String(t % 60)
+        return t >= 60 ? String(localized: "\(h) h \(m) min") : String(localized: "\(m) min")
     }
 
     private func timeText(_ d: Date) -> String {
-        d.formatted(.dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
+        d.formatted(.dateTime.hour().minute().locale(AppLanguage.activeLocale))
     }
 }
 #endif

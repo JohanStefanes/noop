@@ -2,7 +2,7 @@
 import SwiftUI
 import StrandDesign
 
-/// Root of the JohanUI layer: Heute, Schlaf, Journal and Mehr. `RootTabView` routes here while
+/// Root of the JohanUI layer: Heute, Schlaf, Belastung and Mehr. `RootTabView` routes here while
 /// `johanUIEnabled` is on. The original shell is still reachable from "Mehr".
 struct JohanRootView: View {
     let homeScreenQuickActionsEnabled: Bool
@@ -27,20 +27,17 @@ struct JohanRootView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack { JohanHomeView().tabRouteDestinations() }
-                .johanTabFade(selected: selectedTab == 0, still: motion.isStill)
-                .tabItem { tabLabel("Heute", "circle.hexagongrid.fill", 0) }.tag(0)
+                .tabItem { tabLabel(String(localized: "Today"), "circle.hexagongrid.fill", 0) }.tag(0)
             NavigationStack { JohanSleepCoachView().tabRouteDestinations() }
-                .johanTabFade(selected: selectedTab == 1, still: motion.isStill)
-                .tabItem { tabLabel("Schlaf", "moon.stars.fill", 1) }.tag(1)
-            NavigationStack { JohanJournalImpactView().tabRouteDestinations() }
-                .johanTabFade(selected: selectedTab == 2, still: motion.isStill)
-                .tabItem { tabLabel("Journal", "book.closed.fill", 2) }.tag(2)
+                .tabItem { tabLabel(String(localized: "Sleep"), "moon.stars.fill", 1) }.tag(1)
+            NavigationStack { JohanStrainView().tabRouteDestinations() }
+                .tabItem { tabLabel(String(localized: "Strain"), "flame.fill", 2) }.tag(2)
             JohanMoreView(homeScreenQuickActionsEnabled: homeScreenQuickActionsEnabled)
-                .johanTabFade(selected: selectedTab == 3, still: motion.isStill)
-                .tabItem { tabLabel("Mehr", "ellipsis", 3) }.tag(3)
+                .tabItem { tabLabel(String(localized: "More"), "ellipsis", 3) }.tag(3)
         }
-        .onChange(of: selectedTab) { _, _ in StrandHaptic.selection.play() }
-        .tint(JohanTheme.recoveryGreen)
+        .environment(\.johanSelectTab) { tab in selectedTab = tab.rawValue }
+        // White, not an accent: green is reserved for "well recovered" in the content below.
+        .tint(JohanTheme.textPrimary)
         // noop's own appearance setting sets preferredColorScheme higher up and wins over ours, so the
         // resolved scheme is forced for this subtree too; otherwise semantic colours render black on black.
         .environment(\.colorScheme, .dark)
@@ -52,10 +49,7 @@ struct JohanRootView: View {
         .onChange(of: router.requestedDestination) { _, dest in
             guard let dest else { return }
             router.requestedDestination = nil
-            switch dest {
-            case .journal: selectedTab = 2
-            default: routed = dest
-            }
+            routed = dest
         }
     }
 
@@ -91,27 +85,10 @@ struct JohanRootView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Fertig") { routed = nil }
+                    Button("Done") { routed = nil }
                 }
             }
         }
     }
-}
-#endif
-
-#if os(iOS)
-private struct JohanTabFade: ViewModifier {
-    let selected: Bool
-    let still: Bool
-    func body(content: Content) -> some View {
-        content
-            .opacity(selected || still ? 1 : 0)
-            .animation(still ? nil : JohanTheme.Motion.tabFade, value: selected)
-    }
-}
-
-extension View {
-    /// Gentle fade-in of a tab's content when it becomes the selected tab.
-    func johanTabFade(selected: Bool, still: Bool) -> some View { modifier(JohanTabFade(selected: selected, still: still)) }
 }
 #endif

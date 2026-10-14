@@ -52,6 +52,16 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The iOS app defaults to English: a fresh install, or one where no language was ever picked, gets
+    /// English instead of following the device. Writes the stored choice too, so Settings and the JohanUI
+    /// picker show English rather than "System default". Call before anything reads a localized string;
+    /// if the bundle has already bound its localization, the override applies from the next launch.
+    static func applyEnglishDefaultIfUnset(defaults: UserDefaults = .standard) {
+        guard defaults.string(forKey: storageKey) == nil else { return }
+        defaults.set(AppLanguage.english.rawValue, forKey: storageKey)
+        apply(AppLanguage.english.rawValue, defaults: defaults)
+    }
+
     /// Locale used by SwiftUI format styles for the language that the currently-running bundles chose.
     /// This deliberately follows `Bundle`, not the pending picker value, so changing the setting cannot
     /// produce a half-new/half-old UI before the requested reopen.

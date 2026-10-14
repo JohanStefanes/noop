@@ -82,6 +82,28 @@ struct BuzzStrapIntent: AppIntent {
     }
 }
 
+/// Vibrate the strap a few times WITHOUT opening NOOP, for a Shortcuts automation "When an alarm goes off".
+/// iOS gives apps no way to read the Clock app's alarms or to observe one firing, so the user's own
+/// automation is the trigger and this is the action. It runs inside NOOP's process in the background
+/// (like Sync Strap), waits briefly for a live strap link, then repeats the confirmed one-shot buzz.
+/// It cannot park the request: an alarm buzz delivered after the alarm is over is worse than none, so a
+/// strap that is not connected in time is reported, not queued.
+struct AlarmBuzzIntent: AppIntent {
+    static var title: LocalizedStringResource = "Buzz Strap for Alarm"
+    static var description = IntentDescription("Vibrate your WHOOP strap a few times without opening NOOP. Add it to a Shortcuts automation that runs when an iPhone alarm goes off.")
+    static var openAppWhenRun = false
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        switch await AppModel.buzzForAlarmFromShortcut() {
+        // Names only what NOOP did: the writes went out on a ready link. Whether the motor ran is not
+        // observable from here.
+        case .sent:              return .result(dialog: "Sent the alarm buzz to your strap.")
+        case .strapNotConnected: return .result(dialog: "Your strap isn't connected to NOOP, so it couldn't buzz.")
+        }
+    }
+}
+
 /// Pull the strap's stored history now: the Shortcuts twin of the "Sync now" button, run WITHOUT opening NOOP.
 /// iOS runs an in-app intent inside NOOP's own process (launching or resuming it in the background), where the
 /// strap link lives under the bluetooth-central background mode, so the offload carries on after this returns.
@@ -139,6 +161,10 @@ struct NOOPShortcuts: AppShortcutsProvider {
                     phrases: ["Mark a moment in \(.applicationName)"],
                     shortTitle: "Mark a Moment",
                     systemImageName: "mappin.and.ellipse")
+        AppShortcut(intent: AlarmBuzzIntent(),
+                    phrases: ["Buzz my \(.applicationName) strap for my alarm"],
+                    shortTitle: "Buzz Strap for Alarm",
+                    systemImageName: "alarm.waves.left.and.right")
         AppShortcut(intent: BuzzStrapIntent(),
                     phrases: ["Buzz my \(.applicationName) strap"],
                     shortTitle: "Buzz Strap",

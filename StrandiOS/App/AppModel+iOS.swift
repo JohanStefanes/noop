@@ -17,7 +17,41 @@ enum StrapSyncShortcutOutcome {
     case notStarted
 }
 
+/// What the "Buzz Strap for Alarm" shortcut observed. Each case names only what was seen.
+enum AlarmBuzzShortcutOutcome {
+    /// The link was ready and the buzz writes were sent.
+    case sent
+    /// No ready strap link within the wait, so nothing was sent.
+    case strapNotConnected
+}
+
 extension AppModel {
+    /// Background entry point for the "Buzz Strap for Alarm" shortcut. Waits up to `waitSeconds` for a ready
+    /// link (connected and past the handshake, the same readiness the Sync Strap shortcut waits for), then
+    /// plays `pattern` (the user's saved `AlarmBuzzPattern` unless one is passed, as the preview does): one
+    /// `buzzBurst` per burst, `gapSeconds` apart. The intent awaits this, which keeps the background-launched
+    /// process alive for the whole pattern.
+    @MainActor
+    static func buzzForAlarmFromShortcut(waitSeconds: Int = 10,
+                                         pattern: AlarmBuzzPattern = .saved) async -> AlarmBuzzShortcutOutcome {
+        let p = pattern.clamped
+        func ready(_ m: AppModel?) -> Bool { m.map { $0.live.connected && $0.live.historyReady } ?? false }
+        for _ in 0..<waitSeconds where !ready(shared) {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        guard let model = shared, ready(model) else {
+            shared?.live.append(log: "Alarm buzz shortcut: strap link not ready within \(waitSeconds) s, nothing sent")
+            return .strapNotConnected
+        }
+        model.live.append(log: "Alarm buzz shortcut: \(p.bursts) bursts of \(p.pulses), \(p.gapSeconds) s apart"
+                          + (p.strapAlarmSignal ? ", with alarm signal" : ""))
+        for i in 0..<p.bursts {
+            model.ble.buzzBurst(pulses: p.pulses, strapAlarmSignal: p.strapAlarmSignal)
+            if i < p.bursts - 1 { try? await Task.sleep(nanoseconds: UInt64(p.gapSeconds * 1_000_000_000)) }
+        }
+        return .sent
+    }
+
     /// Execute any actions queued by App Intents while the app was suspended (mark moment, buzz,
     /// ask coach). Call when the app becomes active. The optional `router` lets the ask-coach
     /// intent navigate to the Coach tab after sending the question.

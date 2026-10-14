@@ -16,7 +16,6 @@ extension JohanTheme {
         static let dialSweep = Animation.spring(response: 0.95, dampingFraction: 0.74)
         static let dialSettle: Double = 0.85            // when the sweep counts as landed (haptic)
         static let countUp = Animation.easeOut(duration: 0.9)
-        static let glowDot: CGFloat = 1.0               // glow dot diameter in ring line widths
         // Cards
         static let staggerStep: Double = 0.06
         static let riseOffset: CGFloat = 16
@@ -31,17 +30,13 @@ extension JohanTheme {
         static let sparkDraw = Animation.easeOut(duration: 1.1)
         // Calibration
         static let ringFill = Animation.spring(response: 0.9, dampingFraction: 0.8)
-        static let shimmerPeriod: Double = 3.6
-        // Recommendation bar
-        static let bandFade = Animation.easeOut(duration: 0.45)
+        // Strain gauge
         static let markerSpring = Animation.spring(response: 0.6, dampingFraction: 0.58)
         static let markerDelay: Double = 0.4
         // Charts
         static let barGrow = Animation.spring(response: 0.6, dampingFraction: 0.78)
         static let barStagger: Double = 0.05
         static let hypnogramReveal = Animation.easeOut(duration: 1.2)
-        // Tabs
-        static let tabFade = Animation.easeInOut(duration: 0.28)
     }
 }
 
