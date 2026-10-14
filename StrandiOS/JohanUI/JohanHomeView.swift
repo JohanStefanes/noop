@@ -61,7 +61,11 @@ struct JohanHomeView: View {
         .sheet(isPresented: $showRecoveryDetail) {
             let s = model.snapshot
             if let rec = s.recovery {
-                JohanRecoveryDetail(recovery: rec, isToday: s.isToday, drivers: s.drivers, confidence: s.confidence)
+                JohanRecoveryDetail(recovery: rec, isToday: s.isToday, drivers: s.drivers, confidence: s.confidence,
+                                    trend: (0..<14).reversed().map { back in
+                                        let key = model.dayKey(offset: model.dayOffset + back)
+                                        return .init(key: key, recovery: model.rings(for: key).recovery)
+                                    })
             }
         }
         .task(id: model.dayOffset) { await model.load(repo: repo, profile: profile) }

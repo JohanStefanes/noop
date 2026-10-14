@@ -1,6 +1,18 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "How recovered you were that morning.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "How recovered you were that morning."}}, "de": {"stringUnit": {"state": "translated", "value": "So erholt warst du an diesem Morgen."}}}},
+    "About your 2-week average": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "About your 2-week average"}}, "de": {"stringUnit": {"state": "translated", "value": "Etwa dein 2-Wochen-Schnitt"}}}},
+    "%lld above your 2-week average": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%lld above your 2-week average"}}, "de": {"stringUnit": {"state": "translated", "value": "%lld über deinem 2-Wochen-Schnitt"}}}},
+    "%lld below your 2-week average": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%lld below your 2-week average"}}, "de": {"stringUnit": {"state": "translated", "value": "%lld unter deinem 2-Wochen-Schnitt"}}}},
+    "Held back": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Held back"}}, "de": {"stringUnit": {"state": "translated", "value": "Gebremst"}}}},
+    "Lifted": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Lifted"}}, "de": {"stringUnit": {"state": "translated", "value": "Gestärkt"}}}},
+    "Last 2 weeks": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Last 2 weeks"}}, "de": {"stringUnit": {"state": "translated", "value": "Letzte 2 Wochen"}}}},
+    "Recovery, last 2 weeks": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery, last 2 weeks"}}, "de": {"stringUnit": {"state": "translated", "value": "Erholung, letzte 2 Wochen"}}}},
+    "Hides the explanation": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Hides the explanation"}}, "de": {"stringUnit": {"state": "translated", "value": "Blendet die Erklärung aus"}}}},
+    "Shows the explanation": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Shows the explanation"}}, "de": {"stringUnit": {"state": "translated", "value": "Zeigt die Erklärung"}}}},
+    "Ø %lld %%": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Ø %lld %%"}}, "de": {"stringUnit": {"state": "translated", "value": "Ø %lld %%"}}}},
+    "%@ · %lld %%": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@ · %lld %%"}}, "de": {"stringUnit": {"state": "translated", "value": "%@ · %lld %%"}}}},
     "Opens the calendar": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Opens the calendar"}}, "de": {"stringUnit": {"state": "translated", "value": "Öffnet den Kalender"}}}},
     "Previous month": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Previous month"}}, "de": {"stringUnit": {"state": "translated", "value": "Vorheriger Monat"}}}},
     "Next month": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Next month"}}, "de": {"stringUnit": {"state": "translated", "value": "Nächster Monat"}}}},
