@@ -13,6 +13,8 @@ struct JohanHomeView: View {
     @EnvironmentObject private var profile: ProfileStore
     @StateObject private var model = JohanHomeModel()
     @Environment(\.johanSelectTab) private var selectTab
+    @Environment(\.johanIntroPhase) private var introPhase
+    @Environment(\.johanIntroTarget) private var reportIntroTarget
     @State private var showRecoveryDetail = false
     @State private var showCalendar = false
     private let motion = JohanStill()
@@ -34,7 +36,10 @@ struct JohanHomeView: View {
         return JohanScreen(title: "", showsNavigationBar: false) {
             header.johanStagger(0)
             VStack(spacing: gap) {
-                ringsHero(s, zone: zone, recColor: recColor, size: min(260, width * 0.72)).johanStagger(1)
+                let ringSize = min(260, width * 0.72)
+                ringsHero(s, zone: zone, recColor: recColor, size: ringSize).johanStagger(1)
+                    // Outside the stagger, so the measured centre is the resting one, not the risen-from one.
+                    .background { introTargetReader(size: ringSize, recColor: recColor) }
                 statsRow(s, recColor: recColor).johanStagger(2)
                 statusCard(s, zone: zone).padding(.top, 6).johanStagger(3)
                 // Both cards take the taller one's height, so the row reads as one band.
@@ -199,24 +204,43 @@ struct JohanHomeView: View {
     /// over a soft glow of the same. Tapping explains the recovery score; there is nothing to explain without one.
     private func ringsHero(_ s: JohanHomeModel.Snapshot, zone: JohanTheme.RecoveryZone?, recColor: Color,
                            size: CGFloat) -> some View {
-        Button { showRecoveryDetail = true } label: {
+        let introDone = introPhase == .done
+        return Button { showRecoveryDetail = true } label: {
             JohanActivityRings(rings: [
                 .init(fraction: s.recovery.map { $0 / 100 }, color: recColor),
                 .init(fraction: s.sleepPct.map { $0 / 100 }, color: JohanTheme.sleepViolet),
                 .init(fraction: s.strain21.map { $0 / 21 }, color: JohanTheme.strainBlue),
-            ], size: size, lineWidth: size * 0.088, spacing: size * 0.016, replayKey: model.dayOffset)
+            // Held at -1 while the intro's rings fly in, so the sweep starts the moment they land.
+            ], size: size, lineWidth: size * 0.088, spacing: size * 0.016, replayKey: introDone ? model.dayOffset : -1)
             // The glow sits behind without taking layout space, so it never pushes the rings apart from
             // the header and the values.
             .background { JohanAmbientGlow(color: zone?.color ?? JohanTheme.strainBlue, size: size * 1.35) }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
+            // Hidden under the intro's rings until they land on this spot. Shown at once, not faded: the
+            // intro's tracks vanish in the same frame, so a fade would read as a dip.
+            .opacity(introDone ? 1 : 0)
         }
         .buttonStyle(JohanPressStyle())
         .disabled(s.recovery == nil)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ringsAccessibilityLabel(s))
         .accessibilityHint(s.recovery == nil ? "" : String(localized: "Shows what shaped your recovery"))
+    }
+
+    /// Tells the launch intro where these rings sit and in which colour the recovery ring lands.
+    @ViewBuilder
+    private func introTargetReader(size: CGFloat, recColor: Color) -> some View {
+        if introPhase != .done {
+            GeometryReader { g in
+                let target = JohanIntroTarget(center: CGPoint(x: g.frame(in: .global).midX, y: g.frame(in: .global).midY),
+                                              size: size, recoveryColor: recColor)
+                Color.clear
+                    .onAppear { reportIntroTarget(target) }
+                    .onChange(of: target) { _, t in reportIntroTarget(t) }
+            }
+        }
     }
 
     private func ringsAccessibilityLabel(_ s: JohanHomeModel.Snapshot) -> String {

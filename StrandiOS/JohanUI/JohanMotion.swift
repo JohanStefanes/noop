@@ -56,6 +56,8 @@ struct JohanStill: DynamicProperty {
 private struct JohanStagger: ViewModifier {
     let index: Int
     private let motion = JohanStill()
+    /// The launch intro holds the entrance until its rings start flying to Home.
+    @Environment(\.johanIntroPhase) private var introPhase
     @State private var shown = false
 
     func body(content: Content) -> some View {
@@ -63,13 +65,16 @@ private struct JohanStagger: ViewModifier {
         content
             .opacity(visible ? 1 : 0)
             .offset(y: visible ? 0 : JohanTheme.Motion.riseOffset)
-            .onAppear {
-                guard !shown else { return }
-                if motion.isStill { shown = true; return }
-                withAnimation(JohanTheme.Motion.cardIn.delay(Double(index) * JohanTheme.Motion.staggerStep)) {
-                    shown = true
-                }
-            }
+            .onAppear { enter() }
+            .onChange(of: introPhase) { _, _ in enter() }
+    }
+
+    private func enter() {
+        guard !shown, introPhase != .playing else { return }
+        if motion.isStill { shown = true; return }
+        withAnimation(JohanTheme.Motion.cardIn.delay(Double(index) * JohanTheme.Motion.staggerStep)) {
+            shown = true
+        }
     }
 }
 

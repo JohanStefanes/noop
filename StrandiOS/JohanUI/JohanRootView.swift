@@ -23,6 +23,8 @@ struct JohanRootView: View {
         return 0
     }
     @State private var routed: NavRouter.Destination?
+    @State private var introPhase: JohanIntroPhase = JohanIntro.played || JohanIntro.suppressed ? .done : .playing
+    @State private var introTarget: JohanIntroTarget?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -36,6 +38,20 @@ struct JohanRootView: View {
                 .tabItem { tabLabel(String(localized: "More"), "ellipsis", 3) }.tag(3)
         }
         .environment(\.johanSelectTab) { tab in selectedTab = tab.rawValue }
+        .environment(\.johanIntroPhase, introPhase)
+        .environment(\.johanIntroTarget) { target in
+            if introPhase != .done && introTarget != target { introTarget = target }
+        }
+        .overlay {
+            if introPhase != .done {
+                JohanIntroOverlay(target: introTarget) { introPhase = $0 }
+            }
+        }
+        .onAppear {
+            guard introPhase != .done else { return }
+            JohanIntro.played = true
+            if motion.isStill { introPhase = .done }
+        }
         // White, not an accent: green is reserved for "well recovered" in the content below.
         .tint(JohanTheme.textPrimary)
         // noop's own appearance setting sets preferredColorScheme higher up and wins over ours, so the
