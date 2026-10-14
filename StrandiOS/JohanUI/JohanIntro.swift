@@ -138,7 +138,7 @@ struct JohanIntroOverlay: View {
             Canvas { ctx, _ in
                 draw(ctx, t: t, center: center, ringSize: ringSize * scale, colors: colors)
             }
-            Text(verbatim: "NOOP")
+            Text(verbatim: "Ups")
                 .font(.system(.footnote, design: .rounded, weight: .bold))
                 .tracking(6)
                 .foregroundStyle(JohanTheme.textSecondary)
