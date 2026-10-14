@@ -157,6 +157,13 @@ struct NOOPShortcuts: AppShortcutsProvider {
                     ],
                     shortTitle: "Sync Strap",
                     systemImageName: "arrow.triangle.2.circlepath")
+        AppShortcut(intent: ShowLiveHRIntent(),
+                    phrases: [
+                        "Show my \(.applicationName) heart rate",
+                        "Show live heart rate in \(.applicationName)",
+                    ],
+                    shortTitle: "Show Live Heart Rate",
+                    systemImageName: "heart.text.square")
         AppShortcut(intent: MarkMomentIntent(),
                     phrases: ["Mark a moment in \(.applicationName)"],
                     shortTitle: "Mark a Moment",

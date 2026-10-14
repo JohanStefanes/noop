@@ -123,6 +123,7 @@ struct StrandiOSApp: App {
         let liveActivity = LiveActivityController()
         liveActivity.follow(model, standsAside: { [weak liftActivity] in liftActivity?.isShowing == true })
         _liveActivity = State(initialValue: liveActivity)
+        ShowLiveHRIntent.handler = { [weak liveActivity] in liveActivity?.startFromShortcut() ?? .refused }
         // A gym session keeps ONE banner on the Lock Screen, its own — as the live-HR banner already
         // stands aside for it. A sync started in the foreground mid-session starts no sync banner.
         // Held back only for a gym banner that will actually show: with its switch off, a session leaves the

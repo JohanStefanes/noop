@@ -79,17 +79,32 @@ final class LiveActivityController {
         refreshBanner(appActive: true)
     }
 
+    /// The Show Live Heart Rate intent (`ShowLiveHRIntent`), the one way besides NOOP on screen that iOS lets a banner
+    /// start: run in NOOP's process from Siri, a Shortcuts automation or the Control Center button. Starts the banner
+    /// even before the strap link is up (a background launch reconnects after this runs), showing the dash until a
+    /// heart rate arrives. Says what came of it, for the intent's reply.
+    func startFromShortcut() -> ShowLiveHROutcome {
+        guard authInfo.areActivitiesEnabled else { return .refused }
+        guard UnitPrefs.liveActivityEnabled() else { return .switchedOff }
+        // The Lift Log banner on screen carries the heart rate itself; this one stands aside for it.
+        if standsAside() { return .alreadyShowing }
+        let wasShowing = Activity<NOOPActivityAttributes>.activities.contains(where: Self.isShowing)
+        refreshBanner(appActive: true, requested: true)
+        guard let activity, Self.isShowing(activity) else { return .refused }
+        return wasShowing ? .alreadyShowing : .started
+    }
+
     /// #911: recovery and effort come from the SAME shared `Repository.widgetAnchor` the widget and the watch use, so
     /// the banner cannot name a different day at the rollover; memoized, because this runs on every heart-rate tick
     /// (re-deriving it once scanned the whole history, #1051).
-    private func refreshBanner(appActive: Bool? = nil) {
+    private func refreshBanner(appActive: Bool? = nil, requested: Bool = false) {
         guard let model else { return }
         let connected = model.live.connected
         let day = model.repo.cachedWidgetAnchor()
         update(bpm: connected ? (model.bpm ?? model.live.heartRate) : nil,
                recovery: day?.recovery.map { Int($0.rounded()) }, connected: connected, standsAside: standsAside(),
                appActive: appActive ?? (UIApplication.shared.applicationState == .active),
-               effort: day?.strain.map { Int($0.rounded()) })
+               effort: day?.strain.map { Int($0.rounded()) }, requested: requested)
     }
 
     /// Drive the activity from the latest live values (`LiveHRBannerLifecycle` decides start / push / end). Starts
@@ -98,8 +113,9 @@ final class LiveActivityController {
     /// that is not measuring, and ends only when its switch is off or the Lift Log banner takes the screen
     /// (`standsAside`). Pushed when what it shows changes, and often enough to stay fresh (`LiveHRBannerPushPolicy`,
     /// `staleAfter`).
+    /// `requested`: the intent asked for the banner, which starts it with the link still down.
     private func update(bpm: Int?, recovery: Int?, connected: Bool, standsAside: Bool, appActive: Bool,
-                        effort: Int?) {
+                        effort: Int?, requested: Bool = false) {
         guard authInfo.areActivitiesEnabled else { return }
 
         // A banner iOS ended (after about eight hours) or the user swiped away is gone: forget it, so the next time
@@ -134,7 +150,7 @@ final class LiveActivityController {
         let switchOn = UnitPrefs.liveActivityEnabled()
         let age = startedAt.map { now.timeIntervalSince($0) }
         let step = LiveHRBannerLifecycle.step(
-            switchOn: switchOn, standsAside: standsAside, linkUp: connected,
+            switchOn: switchOn, standsAside: standsAside, linkUp: connected || requested,
             showing: activity != nil, age: age, appActive: appActive)
         switch step {
         case .nothing: return
