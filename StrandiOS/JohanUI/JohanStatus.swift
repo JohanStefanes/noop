@@ -21,8 +21,14 @@ struct JohanStrapFacts {
     var charging: Bool { battery != nil && live.charging == true }
 
     /// Runtime estimate under the same gate as the percentage, so a ring's or a stale strap's figure never
-    /// sits beside this strap's charge.
-    var estimate: BatteryEstimator.Estimate? { battery == nil ? nil : live.batteryEstimate }
+    /// sits beside this strap's charge. Fitted on the strap's STORED battery series (`history`), not on
+    /// `live.batteryEstimate`: that one only sees readings banked since the app last launched, so every
+    /// update restarted it on a few hours of noise and it read a 12-day strap as lasting four.
+    func estimate(history: [(ts: Int, soc: Double)]) -> BatteryEstimator.Estimate? {
+        guard let pct = battery else { return nil }
+        return JohanRuntime.estimate(history: history.isEmpty ? [(Int(Date().timeIntervalSince1970), pct)] : history,
+                                     ratedHours: live.batteryRatedHours)
+    }
 
     var statusColor: Color {
         if !live.connected { return JohanTheme.textTertiary }
@@ -250,8 +256,11 @@ struct JohanStrapChip: View {
 struct JohanStrapView: View {
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var router: NavRouter
+    @EnvironmentObject private var repo: Repository
     /// Bumped by a tap on the orb: the arc, the liquid and the number run their entrance again.
     @State private var replay = 0
+    /// The active strap's stored SoC series for the runtime estimate; nil until the first read lands.
+    @State private var batteryHistory: [(ts: Int, soc: Double)]?
 
     var body: some View {
         let facts = JohanStrapFacts(live: live)
@@ -259,7 +268,8 @@ struct JohanStrapView: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 VStack(spacing: JohanTheme.Metrics.cardSpacing) {
                     batteryHero(facts).johanStagger(0)
-                    if let pct = facts.battery, let est = facts.estimate, !facts.charging {
+                    if let pct = facts.battery, let history = batteryHistory, !facts.charging,
+                       let est = facts.estimate(history: history) {
                         JohanRuntimeCard(estimate: est, battery: pct, tint: facts.batteryColor(pct),
                                          now: context.date)
                             .johanStagger(1)
@@ -271,6 +281,19 @@ struct JohanStrapView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        // Re-read when a new reading arrives (the % moves) and at least every ten minutes.
+        .task(id: "\(live.batteryPct ?? -1)|\(Int(Date().timeIntervalSince1970) / 600)") {
+            await loadBatteryHistory()
+        }
+    }
+
+    private func loadBatteryHistory() async {
+        guard let store = await repo.storeHandle() else { batteryHistory = []; return }
+        let now = Int(Date().timeIntervalSince1970)
+        let rows = (try? await store.batterySamples(deviceId: repo.deviceId,
+                                                    from: now - JohanRuntime.historyDays * 86_400,
+                                                    to: now, limit: 5_000)) ?? []
+        batteryHistory = rows.compactMap { row in row.soc.map { (ts: row.ts, soc: $0) } }
     }
 
     // MARK: Battery
@@ -638,7 +661,7 @@ struct JohanRuntimeCard: View {
     var body: some View {
         let hours = estimate.remainingHours
         let fullDays = hours / max(0.05, battery / 100) / 24
-        let cells = max(1, min(10, Int(fullDays.rounded(.up))))
+        let cells = max(1, min(14, Int(fullDays.rounded(.up))))
         let litDays = hours / 24
         JohanCard {
             VStack(alignment: .leading, spacing: 14) {
@@ -653,7 +676,7 @@ struct JohanRuntimeCard: View {
                 Text(Self.remainingText(hours))
                     .font(.system(.title2, design: .rounded, weight: .semibold))
                     .foregroundStyle(JohanTheme.textPrimary)
-                HStack(spacing: 5) {
+                HStack(spacing: cells > 10 ? 3 : 5) {
                     ForEach(0..<cells, id: \.self) { i in
                         let lit = max(0, min(1, litDays - Double(i)))
                         GeometryReader { g in
@@ -673,7 +696,7 @@ struct JohanRuntimeCard: View {
                 }
                 .accessibilityHidden(true)
                 HStack {
-                    Text(String(localized: "Empty around \(now.addingTimeInterval(hours * 3600).formatted(Self.emptyFormat))"))
+                    Text(String(localized: "Empty around \(Self.emptyText(now.addingTimeInterval(hours * 3600), now: now))"))
                     Spacer(minLength: 8)
                     Text(String(localized: "Full charge ≈ \(Int(fullDays.rounded())) d"))
                 }
@@ -690,8 +713,39 @@ struct JohanRuntimeCard: View {
         return String(localized: "About \(Int((hours / 24).rounded())) days left")
     }
 
-    private static var emptyFormat: Date.FormatStyle {
-        Date.FormatStyle(locale: AppLanguage.activeLocale).weekday(.wide).hour()
+    /// Weekday and hour within the coming week ("Saturday 6 PM"); past that a weekday is ambiguous, so the
+    /// date ("26 Oct").
+    private static func emptyText(_ date: Date, now: Date) -> String {
+        let style = Date.FormatStyle(locale: AppLanguage.activeLocale)
+        return date.timeIntervalSince(now) < 6 * 86_400
+            ? date.formatted(style.weekday(.wide).hour())
+            : date.formatted(style.day().month(.abbreviated))
+    }
+}
+
+/// Runtime from the stored battery series. `BatteryEstimator` trusts a measured slope after 2 h and a 2 %
+/// drop, which the in-memory series hits on its first noisy readings; on a 12-day strap that is a few
+/// tenths of a percent of real discharge. Here a measured slope must also span `minMeasuredSpanHours`
+/// since the last charge, else the generation's rated life stands in.
+enum JohanRuntime {
+    static let historyDays = 14
+    static let minMeasuredSpanHours: Double = 12
+
+    static func estimate(history: [(ts: Int, soc: Double)], ratedHours: Double) -> BatteryEstimator.Estimate? {
+        let sorted = history.sorted { $0.ts < $1.ts }
+        guard let last = sorted.last,
+              let fitted = BatteryEstimator.estimate(samples: sorted, ratedHours: ratedHours) else { return nil }
+        guard fitted.source == .measured else { return fitted }
+        var start = 0
+        for i in stride(from: sorted.count - 1, through: 1, by: -1)
+        where sorted[i].soc > sorted[i - 1].soc + BatteryEstimator.chargeStepPct {
+            start = i
+            break
+        }
+        let spanHours = Double(last.ts - sorted[start].ts) / 3600
+        if spanHours >= minMeasuredSpanHours { return fitted }
+        // One sample cannot fit a slope, so the estimator falls back to the rated life.
+        return BatteryEstimator.estimate(samples: [last], ratedHours: ratedHours)
     }
 }
 
