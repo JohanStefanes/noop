@@ -179,6 +179,10 @@ struct NOOPShortcuts: AppShortcutsProvider {
                     phrases: ["Buzz my \(.applicationName) strap"],
                     shortTitle: "Buzz Strap",
                     systemImageName: "waveform.path")
+        AppShortcut(intent: WhoopSummaryIntent(),
+                    phrases: ["Get my \(.applicationName) summary"],
+                    shortTitle: "Today's Summary",
+                    systemImageName: "doc.text")
         // K9: "Ask Coach" via Siri — opens Coach with the question and sends it. The question
         // parameter is provided via the Shortcuts app or Siri prompts for it when the phrase fires.
         AppShortcut(intent: AskCoachIntent(),
