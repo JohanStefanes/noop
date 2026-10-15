@@ -1,6 +1,7 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Last reading %@, %@": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Last reading %@, %@"}}, "de": {"stringUnit": {"state": "translated", "value": "Letzter Messwert %1$@, %2$@"}}}},
     "Your heart rate while the strap measures it, a dash while it doesn't.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Your heart rate while the strap measures it, a dash while it doesn't."}}, "de": {"stringUnit": {"state": "translated", "value": "Dein Puls, solange der Strap misst, sonst ein Strich."}}}},
     "When your iPhone alarm goes off, NOOP makes your strap vibrate in the pattern you choose, as long as the strap is connected.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "When your iPhone alarm goes off, NOOP makes your strap vibrate in the pattern you choose, as long as the strap is connected."}}, "de": {"stringUnit": {"state": "translated", "value": "Wenn dein iPhone-Wecker klingelt, lässt NOOP dein Armband im Muster deiner Wahl vibrieren, solange es verbunden ist."}}}},
     "Last alarm": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Last alarm"}}, "de": {"stringUnit": {"state": "translated", "value": "Letzter Wecker"}}}},

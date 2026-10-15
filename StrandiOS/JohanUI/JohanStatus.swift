@@ -24,9 +24,14 @@ struct JohanStrapFacts {
     /// sits beside this strap's charge. Fitted on the strap's STORED battery series (`history`), not on
     /// `live.batteryEstimate`: that one only sees readings banked since the app last launched, so every
     /// update restarted it on a few hours of noise and it read a 12-day strap as lasting four.
-    func estimate(history: [(ts: Int, soc: Double)]) -> BatteryEstimator.Estimate? {
+    ///
+    /// The live reading is appended as the newest point, so the hours left start from the percentage shown
+    /// beside them and from now: right after a charge the stored series may still end before it, and the
+    /// estimate then read the pre-charge level next to "100 %".
+    func estimate(history: [(ts: Int, soc: Double)], now: Date = Date()) -> BatteryEstimator.Estimate? {
         guard let pct = battery else { return nil }
-        return JohanRuntime.estimate(history: history.isEmpty ? [(Int(Date().timeIntervalSince1970), pct)] : history,
+        let nowTs = Int(now.timeIntervalSince1970)
+        return JohanRuntime.estimate(history: history.filter { $0.ts < nowTs } + [(nowTs, pct)],
                                      ratedHours: live.batteryRatedHours)
     }
 
@@ -269,7 +274,7 @@ struct JohanStrapView: View {
                 VStack(spacing: JohanTheme.Metrics.cardSpacing) {
                     batteryHero(facts).johanStagger(0)
                     if let pct = facts.battery, let history = batteryHistory, !facts.charging,
-                       let est = facts.estimate(history: history) {
+                       let est = facts.estimate(history: history, now: context.date) {
                         JohanRuntimeCard(estimate: est, battery: pct, tint: facts.batteryColor(pct),
                                          now: context.date)
                             .johanStagger(1)
@@ -323,9 +328,18 @@ struct JohanStrapView: View {
                         .font(JohanTheme.Fonts.title)
                         .foregroundStyle(JohanTheme.textPrimary)
                     if !facts.connected {
-                        Text("Battery and sync appear once the strap is in range.")
-                            .font(.system(.subheadline))
-                            .foregroundStyle(JohanTheme.textSecondary)
+                        if let last = batteryHistory?.max(by: { $0.ts < $1.ts }) {
+                            // The last stored reading, labelled with its age: never shown as the current charge.
+                            let seen = Date(timeIntervalSince1970: TimeInterval(last.ts))
+                            let level = (last.soc / 100).formatted(.percent.precision(.fractionLength(0)))
+                            Text(String(localized: "Last reading \(level), \(seen.formatted(.relative(presentation: .named)))"))
+                                .font(.system(.subheadline))
+                                .foregroundStyle(JohanTheme.textSecondary)
+                        } else {
+                            Text("Battery and sync appear once the strap is in range.")
+                                .font(.system(.subheadline))
+                                .foregroundStyle(JohanTheme.textSecondary)
+                        }
                     }
                 }
                 .multilineTextAlignment(.center)
