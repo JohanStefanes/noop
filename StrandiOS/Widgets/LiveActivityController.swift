@@ -91,7 +91,27 @@ final class LiveActivityController {
         let wasShowing = Activity<NOOPActivityAttributes>.activities.contains(where: Self.isShowing)
         refreshBanner(appActive: true, requested: true)
         guard let activity, Self.isShowing(activity) else { return .refused }
+        if !wasShowing { giveUpIfNoLink(started: activity.id) }
         return wasShowing ? .alreadyShowing : .started
+    }
+
+    /// How long a banner the shortcut started without a strap link waits for one before it is taken down.
+    static let shortcutLinkGrace: TimeInterval = 120
+
+    /// A banner the shortcut started while the strap was out of reach would otherwise sit on the Lock Screen
+    /// showing the dash until iOS's eight-hour limit. If the strap has not connected by `shortcutLinkGrace`,
+    /// it goes. A suspended NOOP runs this at its next wake instead, which is no later than the strap coming
+    /// back, and then the link is up and the banner stays.
+    private func giveUpIfNoLink(started id: String) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.shortcutLinkGrace * 1_000_000_000))
+            guard let self, let model = self.model, !model.live.connected, !self.isEnding,
+                  let activity = self.activity, activity.id == id, Self.isShowing(activity) else { return }
+            self.isEnding = true
+            self.log("ended: started from the shortcut, but the strap did not connect within "
+                     + "\(Int(Self.shortcutLinkGrace / 60)) min")
+            await self.end()
+        }
     }
 
     /// #911: recovery and effort come from the SAME shared `Repository.widgetAnchor` the widget and the watch use, so

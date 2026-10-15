@@ -126,7 +126,7 @@ struct JohanMoreView: View {
         JohanCard(padding: 0) {
             VStack(spacing: 0) {
                 liveActivityToggle("Live heart rate", "heart.fill", tint: JohanTheme.recoveryRed,
-                                   detail: "While the strap is connected.", isOn: $liveHREnabled)
+                                   detail: "Your heart rate while the strap measures it, a dash while it doesn't.", isOn: $liveHREnabled)
                 rowDivider
                 liveActivityToggle("Lift Log session", "dumbbell.fill", tint: JohanTheme.strainBlue,
                                    detail: "Your set, rest and heart rate, and the Lock Screen light-up on a double-tap.",
