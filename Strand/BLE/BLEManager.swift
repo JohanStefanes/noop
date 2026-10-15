@@ -5600,8 +5600,10 @@ public final class BLEManager: NSObject, ObservableObject {
     /// One burst of a user-chosen alarm buzz pattern: the same acknowledged RUN_HAPTICS_PATTERN write as
     /// `buzzStrapOnce`, with the pulse count as the caller's (clamped to 1...8, the range measured on a
     /// 5/MG, #926; on a 5/MG send() remaps it to the maverick notify buzz with that repeat count), and the
-    /// RUN_ALARM follow-up only when `strapAlarmSignal` asks for it. No new command or payload shape: both
-    /// writes and their bodies are the ones `buzzStrapOnce` already sends.
+    /// RUN_ALARM follow-up only when `strapAlarmSignal` asks for it, and never on a 5/MG: there RUN [2, 1]
+    /// runs the alarm stored in slot 1 and then clears it (docs/PROTOCOL_ALARMS.md), the slot
+    /// `armStrapAlarm` uses, so an alarm buzz would wipe the strap's own wake alarm (#2796). No new command
+    /// or payload shape: the writes and their bodies are the ones `buzzStrapOnce` sends.
     func buzzBurst(pulses: Int, strapAlarmSignal: Bool) {
         let loops = UInt8(min(max(pulses, 1), 8))
         send(.runHapticsPattern, payload: [2, loops, 0, 0, 0], writeType: .withResponse)
@@ -5610,10 +5612,10 @@ public final class BLEManager: NSObject, ObservableObject {
             return
         }
         if selectedModel.deviceFamily == .whoop5 {
-            send(.runAlarm, payload: AlarmPayload.runAlarmRev2(), writeType: .withResponse)
-        } else {
-            send(.runAlarm, payload: [0x01], writeType: .withResponse)
+            log("Buzz: burst of \(loops) (acked); alarm signal skipped on 5/MG, it would clear the armed strap alarm")
+            return
         }
+        send(.runAlarm, payload: [0x01], writeType: .withResponse)
         log("Buzz: burst of \(loops) + runAlarm (acked)")
     }
 

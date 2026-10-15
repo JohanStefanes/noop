@@ -194,7 +194,7 @@ struct JohanAlarmLinkView: View {
             Toggle(isOn: binding(\.strapAlarmSignal)) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Strap alarm signal").font(.system(.subheadline))
-                    Text("Also sends the strap's own alarm command after each burst, as the original buzz did.")
+                    Text("Also sends the strap's own alarm command after each burst, as the original buzz did. WHOOP 4.0 only: on a 5.0/MG it would clear the strap's own wake alarm, so it is skipped there.")
                         .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
                 }
             }
