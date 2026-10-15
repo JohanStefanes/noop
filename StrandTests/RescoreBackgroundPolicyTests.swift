@@ -15,12 +15,15 @@ final class RescoreBackgroundPolicyTests: XCTestCase {
                         realUpdate: Bool = true,
                         unfinished: Bool = false,
                         running: Bool = false,
-                        attemptedSecondsAgo: Double? = 60) -> RescoreBackgroundPolicy.Decision {
+                        attemptedSecondsAgo: Double? = 60,
+                        backgroundAttemptedSecondsAgo: Double?? = .none) -> RescoreBackgroundPolicy.Decision {
         RescoreBackgroundPolicy.decide(isBackground: background,
                                        isRealUpdate: realUpdate,
                                        rescoreAlreadyOwed: unfinished,
                                        passInProgress: running,
-                                       secondsSinceLastAttempt: attemptedSecondsAgo)
+                                       secondsSinceLastAttempt: attemptedSecondsAgo,
+                                       secondsSinceLastBackgroundAttempt: backgroundAttemptedSecondsAgo
+                                           ?? attemptedSecondsAgo)
     }
 
     private func isDeferred(_ d: RescoreBackgroundPolicy.Decision) -> Bool {
@@ -68,6 +71,17 @@ final class RescoreBackgroundPolicyTests: XCTestCase {
     /// The spacing is for the background only: an open app re-scores every offload, as before.
     func testSpacingNeverHoldsBackAForegroundPass() {
         XCTAssertEqual(decide(background: false, attemptedSecondsAgo: 0), .run)
+    }
+
+    /// The spacing rations BACKGROUNDED passes. A foreground backstop tick fired two seconds into a
+    /// morning offload and scored the evening half of the night; the post-offload pass two minutes later,
+    /// by then backgrounded, deferred on it, and the night stayed unscored until the app was next opened.
+    func testARecentForegroundPassDoesNotSpaceABackgroundOffload() {
+        XCTAssertEqual(decide(attemptedSecondsAgo: 2 * 60, backgroundAttemptedSecondsAgo: .some(nil)), .run)
+        XCTAssertEqual(decide(attemptedSecondsAgo: 2 * 60,
+                              backgroundAttemptedSecondsAgo: RescoreBackgroundPolicy.backgroundSpacingSeconds),
+                       .run)
+        XCTAssertTrue(isDeferred(decide(attemptedSecondsAgo: 2 * 60, backgroundAttemptedSecondsAgo: 5 * 60)))
     }
 
     /// A trigger while a pass runs here still reaches the engine, which queues one follow-up. Deferring it

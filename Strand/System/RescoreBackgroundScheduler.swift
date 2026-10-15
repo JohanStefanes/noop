@@ -77,9 +77,22 @@ enum RescoreBackgroundScheduler {
     /// the deferral path, so repeated deferrals cannot keep a stale debt looking fresh.
     static let lastAttemptStartedAtKey = "noop.rescoreLastAttemptStartedAt"
 
+    /// When the last pass that started while BACKGROUNDED began (unix seconds). The spacing in
+    /// `RescoreBackgroundPolicy.backgroundSpacingSeconds` is between backgrounded passes only: a
+    /// foreground backstop tick that happened to start mid-offload, on the evening half of a night still
+    /// arriving, held back the post-offload pass two minutes later, and the night stayed unscored until
+    /// the app was next opened.
+    static let lastBackgroundAttemptStartedAtKey = "noop.rescoreLastBackgroundAttemptStartedAt"
+
     /// Seconds since the last pass started, nil if none was ever recorded.
     static var secondsSinceLastAttempt: Double? {
         let started = UserDefaults.standard.double(forKey: lastAttemptStartedAtKey)
+        return started > 0 ? Date().timeIntervalSince1970 - started : nil
+    }
+
+    /// Seconds since the last BACKGROUNDED pass started, nil if none was ever recorded.
+    static var secondsSinceLastBackgroundAttempt: Double? {
+        let started = UserDefaults.standard.double(forKey: lastBackgroundAttemptStartedAtKey)
         return started > 0 ? Date().timeIntervalSince1970 - started : nil
     }
 
@@ -90,11 +103,17 @@ enum RescoreBackgroundScheduler {
     /// other caller (the deferral path) can ignore it, since it is not the one that will settle up.
     /// - Parameter passStarting: the caller is a pass about to work (not the deferral path), so the attempt
     ///   time is recorded for `RescoreBackgroundPolicy.interruptedRetryCooldownSeconds`.
+    /// - Parameter isBackground: whether the starting pass is backgrounded, which also records it for the
+    ///   background spacing. Defaults to the real application state; a parameter only so a test can drive it.
     @discardableResult
-    static func markRescoreOwed(passStarting: Bool = false) -> String {
+    static func markRescoreOwed(passStarting: Bool = false, isBackground: Bool? = nil) -> String {
         let token = UUID().uuidString
         if passStarting {
-            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastAttemptStartedAtKey)
+            let now = Date().timeIntervalSince1970
+            UserDefaults.standard.set(now, forKey: lastAttemptStartedAtKey)
+            if isBackground ?? isBackgrounded {
+                UserDefaults.standard.set(now, forKey: lastBackgroundAttemptStartedAtKey)
+            }
         }
         UserDefaults.standard.set(true, forKey: owedKey)
         UserDefaults.standard.set(token, forKey: owedTokenKey)
@@ -191,7 +210,8 @@ enum RescoreBackgroundScheduler {
             isRealUpdate: owesOnDefer,
             rescoreAlreadyOwed: isRescoreOwed,
             passInProgress: passInProgress,
-            secondsSinceLastAttempt: secondsSinceLastAttempt)
+            secondsSinceLastAttempt: secondsSinceLastAttempt,
+            secondsSinceLastBackgroundAttempt: secondsSinceLastBackgroundAttempt)
 
         switch decision {
         case .deferToBackgroundTask(let reason):

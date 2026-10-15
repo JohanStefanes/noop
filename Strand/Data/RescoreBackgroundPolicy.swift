@@ -87,13 +87,17 @@ enum RescoreBackgroundPolicy {
     ///     lands mid-run. Deferring instead recorded a newer debt, the running pass then finished without
     ///     settling it (#1681), and every offload after that deferred on it. Spacing does not apply either.
     ///   - secondsSinceLastAttempt: how long ago the last pass STARTED, nil when unknown. An outstanding
-    ///     debt defers only while that attempt is recent (`interruptedRetryCooldownSeconds`), and any
-    ///     offload defers while it is under `backgroundSpacingSeconds`.
+    ///     debt defers only while that attempt is recent (`interruptedRetryCooldownSeconds`).
+    ///   - secondsSinceLastBackgroundAttempt: how long ago the last pass that started BACKGROUNDED began,
+    ///     nil when unknown. Any offload defers while it is under `backgroundSpacingSeconds`. A foreground
+    ///     pass does not count: it is not what the spacing rations, and counting it let a backstop tick that
+    ///     started mid-offload, on half a night, block the pass for the rest of it.
     static func decide(isBackground: Bool,
                        isRealUpdate: Bool = true,
                        rescoreAlreadyOwed: Bool,
                        passInProgress: Bool = false,
-                       secondsSinceLastAttempt: Double? = nil) -> Decision {
+                       secondsSinceLastAttempt: Double? = nil,
+                       secondsSinceLastBackgroundAttempt: Double? = nil) -> Decision {
         guard isBackground else { return .run }
 
         guard isRealUpdate else {
@@ -107,7 +111,8 @@ enum RescoreBackgroundPolicy {
                 reason: "a re-score is already outstanding from an earlier trigger")
         }
 
-        if !passInProgress, let since = secondsSinceLastAttempt, since >= 0, since < backgroundSpacingSeconds {
+        if !passInProgress, let since = secondsSinceLastBackgroundAttempt, since >= 0,
+           since < backgroundSpacingSeconds {
             return .deferToBackgroundTask(
                 reason: "the last pass started \(Int(since / 60)) min ago; a backgrounded offload re-scores"
                     + " at most every \(Int(backgroundSpacingSeconds / 60)) min")

@@ -16,6 +16,7 @@ final class RescoreBackgroundSchedulerTests: XCTestCase {
     private var savedToken: Any?
     private var savedAfterCompleted: Any?
     private var savedAttemptAt: Any?
+    private var savedBackgroundAttemptAt: Any?
 
     override func setUp() {
         super.setUp()
@@ -28,6 +29,9 @@ final class RescoreBackgroundSchedulerTests: XCTestCase {
             forKey: RescoreBackgroundScheduler.owedAfterCompletedPassKey)
         savedAttemptAt = UserDefaults.standard.object(forKey: RescoreBackgroundScheduler.lastAttemptStartedAtKey)
         UserDefaults.standard.removeObject(forKey: RescoreBackgroundScheduler.lastAttemptStartedAtKey)
+        savedBackgroundAttemptAt = UserDefaults.standard.object(
+            forKey: RescoreBackgroundScheduler.lastBackgroundAttemptStartedAtKey)
+        UserDefaults.standard.removeObject(forKey: RescoreBackgroundScheduler.lastBackgroundAttemptStartedAtKey)
         UserDefaults.standard.removeObject(forKey: RescoreBackgroundScheduler.owedKey)
         UserDefaults.standard.removeObject(forKey: RescoreBackgroundScheduler.lastPassSecondsKey)
         UserDefaults.standard.removeObject(forKey: RescoreBackgroundScheduler.owedTokenKey)
@@ -40,6 +44,7 @@ final class RescoreBackgroundSchedulerTests: XCTestCase {
         restore(savedToken, RescoreBackgroundScheduler.owedTokenKey)
         restore(savedAfterCompleted, RescoreBackgroundScheduler.owedAfterCompletedPassKey)
         restore(savedAttemptAt, RescoreBackgroundScheduler.lastAttemptStartedAtKey)
+        restore(savedBackgroundAttemptAt, RescoreBackgroundScheduler.lastBackgroundAttemptStartedAtKey)
         super.tearDown()
     }
 
@@ -122,10 +127,11 @@ final class RescoreBackgroundSchedulerTests: XCTestCase {
         XCTAssertTrue(ran)
     }
 
-    /// A background offload soon after a pass that finished is spaced: it does not run, and the debt it
-    /// leaves is what the next offload past the spacing, the processing task or the next foreground pays.
+    /// A background offload soon after a backgrounded pass that finished is spaced: it does not run, and the
+    /// debt it leaves is what the next offload past the spacing, the processing task or the next foreground
+    /// pays.
     func testASpacedOffloadIsOwedNotDropped() async {
-        let finished = RescoreBackgroundScheduler.markRescoreOwed(passStarting: true)
+        let finished = RescoreBackgroundScheduler.markRescoreOwed(passStarting: true, isBackground: true)
         RescoreBackgroundScheduler.markRescoreCompleted(seconds: 8, owedToken: finished)
         XCTAssertFalse(RescoreBackgroundScheduler.isRescoreOwed)
 
@@ -365,5 +371,23 @@ final class RescoreBackgroundSchedulerTests: XCTestCase {
         var ran = false
         await RescoreBackgroundScheduler.run(isBackground: true, log: { _ in }) { ran = true }
         XCTAssertTrue(ran, "an attempt older than the cooldown is retried in the background")
+    }
+
+    /// A pass that starts in the foreground does not count toward the background spacing; one that starts
+    /// backgrounded does. The foreground case is the morning offload whose night went unscored.
+    func testOnlyABackgroundedStartCountsTowardTheSpacing() async {
+        let foreground = RescoreBackgroundScheduler.markRescoreOwed(passStarting: true, isBackground: false)
+        RescoreBackgroundScheduler.markRescoreCompleted(seconds: 1, owedToken: foreground)
+        XCTAssertNil(RescoreBackgroundScheduler.secondsSinceLastBackgroundAttempt)
+        var ran = false
+        await RescoreBackgroundScheduler.run(isBackground: true, log: { _ in }) { ran = true }
+        XCTAssertTrue(ran, "a foreground pass two minutes ago must not hold back a background offload")
+
+        let background = RescoreBackgroundScheduler.markRescoreOwed(passStarting: true, isBackground: true)
+        RescoreBackgroundScheduler.markRescoreCompleted(seconds: 1, owedToken: background)
+        XCTAssertNotNil(RescoreBackgroundScheduler.secondsSinceLastBackgroundAttempt)
+        var ranAgain = false
+        await RescoreBackgroundScheduler.run(isBackground: true, log: { _ in }) { ranAgain = true }
+        XCTAssertFalse(ranAgain, "a backgrounded pass just now still spaces the next background offload")
     }
 }
