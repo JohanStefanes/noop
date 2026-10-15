@@ -20,7 +20,8 @@ private struct JohanClassicBypassKey: EnvironmentKey {
 
 /// The JohanUI tabs, in tab-bar order.
 enum JohanTab: Int {
-    case home, sleep, strain, more
+    // Raw values are the TabView tags; `workout` is appended so the existing tags keep their numbers.
+    case home, sleep, strain, more, workout
 }
 
 private struct JohanSelectTabKey: EnvironmentKey {

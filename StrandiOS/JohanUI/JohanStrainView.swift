@@ -11,7 +11,6 @@ struct JohanStrainView: View {
     @EnvironmentObject private var intelligence: IntelligenceEngine
     @StateObject private var today = JohanHomeModel()
     @StateObject private var model = JohanStrainModel()
-    @ScaledMetric(relativeTo: .body) private var iconTile: CGFloat = 32
     @State private var openWorkout: JohanStrainModel.Workout?
     @State private var loggingSport: QuickSport?
 
@@ -162,7 +161,7 @@ struct JohanStrainView: View {
                 } else {
                     ForEach(model.workouts) { w in
                         // A sheet, as the original Workouts list presents it: the detail brings its own Done.
-                        Button { openWorkout = w } label: { workoutRow(w) }
+                        Button { openWorkout = w } label: { JohanWorkoutRow(workout: w) }
                             .buttonStyle(JohanPressStyle())
                         if w.id != model.workouts.last?.id { Divider().overlay(JohanTheme.cardBorder) }
                     }
@@ -208,43 +207,6 @@ struct JohanStrainView: View {
             .buttonStyle(JohanPressStyle())
             .accessibilityLabel(Text("Log \(Text(quick.title))"))
         }
-    }
-
-    private func workoutRow(_ w: JohanStrainModel.Workout) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: sportSymbol(w.sport))
-                .font(.system(.subheadline, weight: .semibold))
-                .foregroundStyle(JohanTheme.strainBlue)
-                .frame(width: iconTile, height: iconTile)
-                .background(RoundedRectangle(cornerRadius: iconTile * 0.27, style: .continuous)
-                    .fill(JohanTheme.strainBlue.opacity(0.16)))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(WorkoutSource.displaySport(w.sport)).font(.system(.subheadline, weight: .semibold)).lineLimit(1)
-                Text(subtitle(w)).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Text(w.strain21.map { String(format: "%.1f", $0) } ?? "–")
-                .johanNumberFont(18)
-                .foregroundStyle(w.strain21 != nil ? JohanTheme.strainBlue : JohanTheme.textTertiary)
-            Image(systemName: "chevron.right")
-                .font(.system(.caption, weight: .semibold))
-                .foregroundStyle(JohanTheme.textTertiary)
-                .accessibilityHidden(true)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-    }
-
-    private func subtitle(_ w: JohanStrainModel.Workout) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(w.startTs))
-            .formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)
-                .locale(AppLanguage.activeLocale))
-        var parts = [date]
-        if let d = w.durationS { parts.append(String(localized: "\(String(Int((d / 60).rounded()))) min")) }
-        if let hr = w.avgHr { parts.append("Ø \(hr) bpm") }
-        return parts.joined(separator: " · ")
     }
 }
 #endif

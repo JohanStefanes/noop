@@ -527,7 +527,7 @@ struct JohanHomeView: View {
 /// API the Live tab uses (`startRealtimeHR` / `stopRealtimeHR`, balanced exactly once), released when the
 /// app leaves the foreground because the stream costs strap battery, and re-sent on a new connection
 /// the way the Live tab's `reconnectLiveSession` does.
-private struct JohanLiveHRDemand: ViewModifier {
+struct JohanLiveHRDemand: ViewModifier {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
     @Environment(\.scenePhase) private var scenePhase

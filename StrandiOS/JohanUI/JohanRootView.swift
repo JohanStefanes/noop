@@ -2,7 +2,7 @@
 import SwiftUI
 import StrandDesign
 
-/// Root of the JohanUI layer: Heute, Schlaf, Belastung and Mehr. `RootTabView` routes here while
+/// Root of the JohanUI layer: Heute, Schlaf, Belastung, Workout and Mehr. `RootTabView` routes here while
 /// `johanUIEnabled` is on. The original shell is still reachable from "Mehr".
 struct JohanRootView: View {
     let homeScreenQuickActionsEnabled: Bool
@@ -12,11 +12,11 @@ struct JohanRootView: View {
     @State private var selectedTab = JohanRootView.initialTab
     private let motion = JohanStill()
 
-    /// DEBUG only: `--johan-tab <0-3>` picks the starting tab (simulator screenshots).
+    /// DEBUG only: `--johan-tab <0-4>` picks the starting tab (simulator screenshots). Values are `JohanTab` raw values.
     private static var initialTab: Int {
         #if DEBUG
         let args = CommandLine.arguments
-        if let i = args.firstIndex(of: "--johan-tab"), i + 1 < args.count, let n = Int(args[i + 1]), (0...3).contains(n) {
+        if let i = args.firstIndex(of: "--johan-tab"), i + 1 < args.count, let n = Int(args[i + 1]), JohanTab(rawValue: n) != nil {
             return n
         }
         #endif
@@ -38,6 +38,9 @@ struct JohanRootView: View {
                 .tabItem { tabLabel(String(localized: "Sleep"), "moon.stars.fill", 1) }.tag(1)
             NavigationStack { JohanStrainView().tabRouteDestinations() }
                 .tabItem { tabLabel(String(localized: "Strain"), "flame.fill", 2) }.tag(2)
+            NavigationStack { JohanWorkoutView().tabRouteDestinations() }
+                .tabItem { tabLabel(String(localized: "Workout"), "figure.run", JohanTab.workout.rawValue) }
+                .tag(JohanTab.workout.rawValue)
             JohanMoreView(homeScreenQuickActionsEnabled: homeScreenQuickActionsEnabled)
                 .tabItem { tabLabel(String(localized: "More"), "ellipsis", 3) }.tag(3)
         }
@@ -76,6 +79,13 @@ struct JohanRootView: View {
         .onChange(of: router.requestedDestination) { _, dest in
             guard let dest else { return }
             router.requestedDestination = nil
+            // A running workout lives on the Workout tab here, so "open the active workout" goes there.
+            if dest == .activeWorkout {
+                // The Workout tab shows the running session itself, so the LiveView one-shot is not needed.
+                router.presentActiveWorkout = false
+                selectedTab = JohanTab.workout.rawValue
+                return
+            }
             routed = dest
         }
     }
