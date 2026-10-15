@@ -24,12 +24,13 @@ struct JohanAlarmLinkView: View {
         JohanScreen(title: String(localized: "Alarm Vibration")) {
             JohanCard {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("When your iPhone alarm goes off, your strap vibrates in the pattern you choose.")
+                    Text("When your iPhone alarm goes off, NOOP makes your strap vibrate in the pattern you choose, as long as the strap is connected.")
                         .font(.system(.subheadline, weight: .semibold))
                     Text("iOS doesn't let apps see the Clock app's alarms. The link therefore runs through a Shortcuts automation you set up once.")
                         .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                 }
             }
+            lastRunCard
             JohanOverline(String(localized: "Set up"))
             JohanCard {
                 VStack(alignment: .leading, spacing: 12) {
@@ -83,6 +84,39 @@ struct JohanAlarmLinkView: View {
                     note(String(localized: "Your iPhone alarm still rings as usual. The strap adds to it, it doesn't replace it."))
                 }
             }
+        }
+    }
+
+    // MARK: Last run
+
+    /// What the automation last did. iOS does not let NOOP see whether the automation exists, so the last
+    /// run it actually recorded is the only proof shown; before the first one this says so.
+    private var lastRunCard: some View {
+        let run = AlarmBuzzRun.last
+        let ok = run?.sent == true
+        return JohanCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: run == nil ? "questionmark.circle" : (ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
+                    .font(.system(.title3))
+                    .foregroundStyle(run == nil ? JohanTheme.textTertiary : (ok ? JohanTheme.recoveryGreen : JohanTheme.recoveryYellow))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Last alarm").font(.system(.subheadline, weight: .semibold))
+                    if let run {
+                        Text(run.date.formatted(.relative(presentation: .named)) + " · "
+                             + run.date.formatted(date: .omitted, time: .shortened))
+                            .font(JohanTheme.Fonts.body)
+                        Text(ok ? String(localized: "The automation ran and the vibration was sent to the strap.")
+                                : String(localized: "The automation ran, but the strap wasn't connected, so nothing was sent."))
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                    } else {
+                        Text("No alarm has run the automation yet. If an alarm has already gone off, check the automation in the Shortcuts app.")
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 

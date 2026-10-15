@@ -95,7 +95,10 @@ struct AlarmBuzzIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        switch await AppModel.buzzForAlarmFromShortcut() {
+        let outcome = await AppModel.buzzForAlarmFromShortcut()
+        // The alarm screen shows this, the only sign it gets that the automation exists and runs.
+        AlarmBuzzRun.record(sent: outcome == .sent)
+        switch outcome {
         // Names only what NOOP did: the writes went out on a ready link. Whether the motor ran is not
         // observable from here.
         case .sent:              return .result(dialog: "Sent the alarm buzz to your strap.")

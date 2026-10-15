@@ -101,4 +101,27 @@ struct AlarmBuzzPattern: Codable, Equatable {
         UserDefaults.standard.set(preset?.rawValue, forKey: presetKey)
     }
 }
+
+/// The last time the "Buzz Strap for Alarm" shortcut ran from an automation, and whether it reached the
+/// strap. Nothing in iOS tells an app whether a Shortcuts automation exists, so this record is the only
+/// evidence the alarm screen can show that the automation is set up and working. Test buzzes from the
+/// screen itself are not recorded.
+struct AlarmBuzzRun: Codable, Equatable {
+    let date: Date
+    /// True when the buzz writes went out on a ready link; false when no strap link was ready in time.
+    let sent: Bool
+
+    private static let key = "johan.alarmBuzz.lastRun"
+
+    static var last: AlarmBuzzRun? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(AlarmBuzzRun.self, from: data)
+    }
+
+    static func record(sent: Bool, at date: Date = Date()) {
+        if let data = try? JSONEncoder().encode(AlarmBuzzRun(date: date, sent: sent)) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+}
 #endif

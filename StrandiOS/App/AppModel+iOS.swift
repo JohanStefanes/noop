@@ -32,9 +32,10 @@ extension AppModel {
     /// `buzzBurst` per burst, `gapSeconds` apart. The intent awaits this, which keeps the background-launched
     /// process alive for the whole pattern.
     @MainActor
-    static func buzzForAlarmFromShortcut(waitSeconds: Int = 10,
+    static func buzzForAlarmFromShortcut(waitSeconds: Int? = nil,
                                          pattern: AlarmBuzzPattern = .saved) async -> AlarmBuzzShortcutOutcome {
         let p = pattern.clamped
+        let waitSeconds = waitSeconds ?? alarmLinkWaitSeconds(for: p)
         func ready(_ m: AppModel?) -> Bool { m.map { $0.live.connected && $0.live.historyReady } ?? false }
         for _ in 0..<waitSeconds where !ready(shared) {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -50,6 +51,14 @@ extension AppModel {
             if i < p.bursts - 1 { try? await Task.sleep(nanoseconds: UInt64(p.gapSeconds * 1_000_000_000)) }
         }
         return .sent
+    }
+
+    /// How long the alarm shortcut waits for the strap link before giving up. After a reboot or once iOS
+    /// has ended NOOP, the strap needs a reconnect and the handshake first, which can take longer than a
+    /// few seconds, so the wait takes whatever the pattern leaves of a ~28 s budget for one background
+    /// intent run (iOS documents no exact limit), and never less than 8 s.
+    static func alarmLinkWaitSeconds(for pattern: AlarmBuzzPattern) -> Int {
+        max(8, Int((28 - pattern.spanSeconds).rounded(.down)))
     }
 
     /// Execute any actions queued by App Intents while the app was suspended (mark moment, buzz,
