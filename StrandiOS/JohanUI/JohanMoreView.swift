@@ -50,6 +50,7 @@ struct JohanMoreView: View {
                 Row(id: "alarmClock", title: String(localized: "Alarm Clock"), icon: "alarm.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(JohanAlarmsView())),
                 Row(id: "alarms", title: String(localized: "Strap Alarm"), icon: "bed.double.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(SmartAlarmView())),
                 Row(id: "alarmLink", title: String(localized: "Alarm Vibration"), icon: "alarm.waves.left.and.right", tint: JohanTheme.recoveryYellow, destination: AnyView(JohanAlarmLinkView())),
+                Row(id: "steps", title: String(localized: "Calibrate Steps"), icon: "shoeprints.fill", tint: JohanTheme.recoveryGreen, destination: AnyView(JohanStepCalibrationView())),
                 Row(id: "devices", title: String(localized: "Devices"), icon: JohanStrapGlyph.iconName, tint: Self.neutral, destination: AnyView(DevicesView())),
                 Row(id: "backup", title: String(localized: "Backup & Sync"), icon: "externaldrive.fill.badge.icloud", tint: Self.neutral, destination: AnyView(BackupSyncView())),
                 Row(id: "settings", title: String(localized: "Settings"), icon: "gearshape.fill", tint: Self.neutral, destination: AnyView(SettingsView()))
