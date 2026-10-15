@@ -180,6 +180,8 @@ targets:
       - StrandiOSShared/WidgetTelemetry.swift
       # JohanUI's MG vs Watch comparison: the pure half, without HealthKit or SwiftUI.
       - StrandiOS/JohanUI/JohanWatchCompare.swift
+      # And the Sleep screen's phase list, the pure half again.
+      - StrandiOS/JohanUI/JohanSleepPhases.swift
     # Same wrapper as the app target, so the OURA_CLOUD_IMPORT-gated Oura tests compile exactly
     # when the app's Oura lane does (flag + creds both come from the untracked OuraSecrets.xcconfig).
     configFiles:

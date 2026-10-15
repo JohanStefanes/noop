@@ -11,6 +11,7 @@ struct JohanSleepCoachView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var model: AppModel
     @StateObject private var coach = JohanSleepCoachModel()
+    @State private var showsPhases = false
 
     var body: some View {
         JohanScreen(title: String(localized: "Sleep")) {
@@ -117,6 +118,7 @@ struct JohanSleepCoachView: View {
                               showsHover: false, nightStart: night.onsetDate, showsTimeAxis: true, filled: true)
                         .johanRevealLeftToRight()
                     stagesVsTypical(sleep)
+                    phaseList(sleep)
                 } else {
                     JohanOverline(String(localized: "Last night"))
                     Text("No night recorded yet. Wear the strap overnight and your sleep will show up here.")
@@ -220,6 +222,75 @@ struct JohanSleepCoachView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(typical.map { String(localized: "\(label): \(hm(last)), typical \(hm($0))") }
                             ?? String(localized: "\(label): \(hm(last))"))
+    }
+
+    // MARK: Phases
+
+    /// Every phase of the night in order (`JohanSleepPhases`), folded away until asked for.
+    @ViewBuilder
+    private func phaseList(_ sleep: SleepModel) -> some View {
+        let phases = JohanSleepPhases.phases(sleep.intervals)
+        if !phases.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Divider().overlay(JohanTheme.cardBorder)
+                Button {
+                    withAnimation(.snappy) { showsPhases.toggle() }
+                } label: {
+                    HStack {
+                        Text(String(localized: "All phases (\(String(phases.count)))"))
+                            .font(.system(.subheadline, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .rotationEffect(.degrees(showsPhases ? 180 : 0))
+                    }
+                    .foregroundStyle(JohanTheme.sleepViolet)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if showsPhases {
+                    VStack(spacing: 0) {
+                        ForEach(Array(phases.enumerated()), id: \.offset) { i, phase in
+                            phaseRow(phase, nightStart: sleep.night.onsetDate)
+                            if i < phases.count - 1 { Divider().overlay(JohanTheme.cardBorder) }
+                        }
+                    }
+                    .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    private func phaseRow(_ phase: JohanSleepPhases.Phase, nightStart: Date) -> some View {
+        let from = timeText(nightStart.addingTimeInterval(phase.start))
+        let to = timeText(nightStart.addingTimeInterval(phase.end))
+        let name = stageName(phase.stage)
+        return HStack(spacing: 10) {
+            Circle().fill(StrandPalette.sleepStageColor(phase.stage)).frame(width: 8, height: 8)
+            Text(name).font(.system(.subheadline)).frame(width: 64, alignment: .leading)
+            Text("\(from) – \(to)").font(.system(.subheadline).monospacedDigit())
+                .foregroundStyle(JohanTheme.textSecondary)
+            Spacer(minLength: 8)
+            Text(phaseDuration(phase.minutes)).font(.system(.subheadline, weight: .semibold).monospacedDigit())
+        }
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "\(name) from \(from) to \(to), \(phaseDuration(phase.minutes))"))
+    }
+
+    private func stageName(_ stage: SleepStage) -> String {
+        switch stage {
+        case .awake: return String(localized: "Awake")
+        case .light: return String(localized: "Light")
+        case .deep: return String(localized: "Deep")
+        case .rem: return "REM"
+        }
+    }
+
+    /// Under a minute reads in seconds, so a short wake-up is not shown as "0 min".
+    private func phaseDuration(_ minutes: Double) -> String {
+        guard minutes < 1 else { return hm(minutes) }
+        let sec = String(Int((minutes * 60).rounded()))
+        return String(localized: "\(sec) s")
     }
 
     // MARK: Consistency
