@@ -47,6 +47,13 @@ final class WatchWorkoutMirror: NSObject {
         session = mirrored
         mirrored.delegate = self
         guard let model else { return }
+        // The phone workout this session started, rehydrated after iOS killed the app: pick its state back
+        // up instead of starting another one.
+        if let w = model.activeWorkout, w.fromWatch {
+            model.setWorkoutPaused(mirrored.state == .paused, fromWatch: true)
+            if mirrored.state == .ended || mirrored.state == .stopped { remoteEnded(mirrored) }
+            return
+        }
         // A workout already running on the phone keeps going; the watch records its own copy as before.
         guard model.activeWorkout == nil else { return }
         model.startWorkout(sport: HealthKitBridge.sportName(mirrored.workoutConfiguration.activityType),
@@ -63,6 +70,17 @@ final class WatchWorkoutMirror: NSObject {
         case .end:
             session.end()
             self.session = nil
+        case .discard:
+            // Tell the watch first, so its stop handler drops the recording instead of saving it. If the
+            // message cannot be delivered the session still ends and the watch keeps its copy, as before.
+            self.session = nil
+            guard let data = try? JSONEncoder().encode(WatchMirrorCommand(discard: true)) else {
+                session.end()
+                return
+            }
+            session.sendToRemoteWorkoutSession(data: data) { _, _ in
+                Task { @MainActor in session.end() }
+            }
         }
     }
 

@@ -14,3 +14,15 @@ public struct WatchMirrorPayload: Codable, Equatable, Sendable {
         self.bpm = bpm
     }
 }
+
+/// The phone to watch message over the same mirrored session. Pause, resume and end travel as session
+/// state changes; only what a state change cannot say goes here.
+public struct WatchMirrorCommand: Codable, Equatable, Sendable {
+    /// The wearer discarded the workout on the phone: the watch drops its recording instead of saving it
+    /// to Apple Health, where the HealthKit import would otherwise bring it straight back.
+    public var discard: Bool
+
+    public init(discard: Bool) {
+        self.discard = discard
+    }
+}

@@ -101,7 +101,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var watchWorkoutBpm: Int?
 
     /// A control the phone sends back to the watch session that started the active workout.
-    enum WatchWorkoutControl { case pause, resume, end }
+    enum WatchWorkoutControl { case pause, resume, end, discard }
     /// Set by the iOS `WatchWorkoutMirror`. Called when the wearer pauses, resumes, ends or discards a
     /// watch-started workout on the phone, so the wrist session follows. Never called for a phone-started
     /// workout, and never for a change that itself arrived from the watch.
@@ -134,8 +134,9 @@ final class AppModel: ObservableObject {
         var peakHr: Int = 0
         var pausedAt: Date?
         var pausedDuration: TimeInterval = 0
-        /// True when the NOOP watch app started this workout and mirrored it here. Not persisted: a
-        /// workout rehydrated after an OS kill continues as a plain phone workout.
+        /// True when the NOOP watch app started this workout and mirrored it here. A workout rehydrated
+        /// after an OS kill gets it back from `WatchMirroredWorkouts`, so the watch session HealthKit hands
+        /// over again on relaunch still ends, pauses and resumes it.
         var fromWatch = false
 
         var isPaused: Bool { pausedAt != nil }
@@ -938,6 +939,7 @@ final class AppModel: ObservableObject {
         w.liveStrain = snap.liveStrain
         w.pausedAt = snap.pausedAtSec.map { Date(timeIntervalSince1970: TimeInterval($0)) }
         w.pausedDuration = TimeInterval(snap.pausedDurationSec ?? 0)
+        w.fromWatch = WatchMirroredWorkouts.startTimes().contains(snap.startSec)
         activeWorkout = w
 
         // Rebuild the transient GPS lifecycle flag as well as the durable workout value. Without this,
@@ -977,13 +979,13 @@ final class AppModel: ObservableObject {
         if w.fromWatch && !fromWatch { onWatchWorkoutControl?(paused ? .pause : .resume) }
     }
 
-    /// Abort the active session without saving a workout. A watch-started workout is ended on the wrist
-    /// too; the watch still saves its own copy there.
+    /// Abort the active session without saving a workout. A watch-started workout is discarded on the
+    /// wrist too, so no copy reaches Apple Health.
     func discardWorkout() {
         guard let w = activeWorkout else { return }
         activeWorkout = nil
         watchWorkoutBpm = nil
-        if w.fromWatch { onWatchWorkoutControl?(.end) }
+        if w.fromWatch { onWatchWorkoutControl?(.discard) }
         if activeWorkoutIsGps { gpsRecorder.stop() }
         activeWorkoutIsGps = false
         ActiveWorkoutPersistence.clear()
@@ -1003,6 +1005,25 @@ final class AppModel: ObservableObject {
     /// deliberate one-minute effort gets to keep it, and the discard is for what falls short of that.
     nonisolated static func isTooShortToSave(elapsedSeconds: TimeInterval) -> Bool {
         elapsedSeconds < minimumWorkoutSeconds
+    }
+
+    /// Why ending the active workout now would save nothing.
+    enum WorkoutSaveBlocker: Equatable {
+        /// Under `minimumWorkoutSeconds`.
+        case tooShort
+        /// Fewer than two heart-rate samples and no GPS route.
+        case noHeartRate
+    }
+
+    /// What would stop `endWorkout` from saving the active workout right now, or nil when it would be
+    /// saved. Checks the same two gates in the same order, so an end confirmation can say beforehand that
+    /// nothing will be kept instead of the workout quietly not appearing.
+    func activeWorkoutSaveBlocker(at now: Date = Date()) -> WorkoutSaveBlocker? {
+        guard let w = activeWorkout else { return nil }
+        let hasRoute = activeWorkoutIsGps && gpsRecorder.pointCount >= 2
+        if w.samples.count < 2 && !hasRoute { return .noHeartRate }
+        if Self.isTooShortToSave(elapsedSeconds: w.elapsed(at: now)) { return .tooShort }
+        return nil
     }
 
     /// End the active workout. `fromWatch` marks an end that arrived from the mirrored watch session;

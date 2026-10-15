@@ -19,6 +19,8 @@ struct JohanWorkoutView: View {
     @AppStorage("johanWorkoutSport") private var selectedSport = "Tennis"
     @State private var openWorkout: JohanStrainModel.Workout?
     @State private var confirmEnd = false
+    /// Read when End is tapped: why ending now would keep nothing, so the confirmation can say so.
+    @State private var endBlocker: AppModel.WorkoutSaveBlocker?
 
     /// Sports offered for a live start. `sport` is the catalogue name (`WorkoutCatalog`), stored verbatim on
     /// the saved workout, so it must match the catalogue spelling.
@@ -57,9 +59,18 @@ struct JohanWorkoutView: View {
         }
         .alert("End this workout?", isPresented: $confirmEnd) {
             Button("Cancel", role: .cancel) { }
-            Button("End", role: .destructive) { model.endWorkout() }
+            // `endWorkout` either way: it drops what it cannot save, and a watch-started workout still
+            // keeps the watch's own copy.
+            Button(endBlocker == nil ? LocalizedStringKey("End") : LocalizedStringKey("End without saving"), role: .destructive) { model.endWorkout() }
         } message: {
-            Text("This stops recording and saves what's captured so far. It can't be resumed.")
+            switch endBlocker {
+            case .tooShort:
+                Text("It has run for less than a minute, so nothing will be saved.")
+            case .noHeartRate:
+                Text("No heart rate has been recorded yet, so nothing will be saved. Connect the strap and keep going to keep this workout.")
+            case nil:
+                Text("This stops recording and saves what's captured so far. It can't be resumed.")
+            }
         }
         .task(id: reloadTick) { await history.load(repo: repo) }
         .onReceive(repo.$days.dropFirst()) { _ in Task { await history.load(repo: repo) } }
@@ -165,7 +176,10 @@ struct JohanWorkoutView: View {
                     controlButton(workout.isPaused ? "Resume" : "Pause",
                                   symbol: workout.isPaused ? "play.fill" : "pause.fill",
                                   filled: false) { model.toggleWorkoutPause() }
-                    controlButton("End", symbol: "stop.fill", filled: true) { confirmEnd = true }
+                    controlButton("End", symbol: "stop.fill", filled: true) {
+                        endBlocker = model.activeWorkoutSaveBlocker()
+                        confirmEnd = true
+                    }
                 }
             }
         }

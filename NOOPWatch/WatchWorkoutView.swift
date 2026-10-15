@@ -335,6 +335,8 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
     private let store = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
+    /// Set by a `WatchMirrorCommand` from the phone just before it ends the mirrored session.
+    private var remoteDiscardRequested = false
 
     private let hrUnit = HKUnit.count().unitDivided(by: .minute())
     private let kcalUnit = HKUnit.kilocalorie()
@@ -506,9 +508,19 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
     }
 
     /// The phone ended the mirrored session. Only acts while recording: a wrist End has already moved
-    /// `phase` to `.ending`, so its own `.stopped` transition does not finish the workout twice.
+    /// `phase` to `.ending`, so its own `.stopped` transition does not finish the workout twice. After a
+    /// discard from the phone the recording is dropped, not saved.
     private func finishFromRemoteStop(at date: Date) {
         guard let session, let builder, phase == .active || phase == .paused else { return }
+        if remoteDiscardRequested {
+            remoteDiscardRequested = false
+            builder.discardWorkout()
+            self.session = nil
+            self.builder = nil
+            session.end()
+            reset()
+            return
+        }
         phase = .ending
         elapsed = builder.elapsedTime
         finish(session: session, builder: builder, at: date)
@@ -566,6 +578,13 @@ extension WatchWorkoutSession: HKWorkoutSessionDelegate {
             self?.session = nil
             self?.builder = nil
         }
+    }
+
+    func workoutSession(_ workoutSession: HKWorkoutSession,
+                        didReceiveDataFromRemoteWorkoutSession data: [Data]) {
+        let discard = data.contains { (try? JSONDecoder().decode(WatchMirrorCommand.self, from: $0))?.discard == true }
+        guard discard else { return }
+        DispatchQueue.main.async { [weak self] in self?.remoteDiscardRequested = true }
     }
 }
 
