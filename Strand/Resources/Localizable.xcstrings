@@ -1,10 +1,16 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Recovery %@": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery %@"}}, "de": {"stringUnit": {"state": "translated", "value": "Recovery %@"}}}},
+    "Weekly Review": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Weekly Review"}}, "de": {"stringUnit": {"state": "translated", "value": "Wochenrückblick"}}}},
+    "No data for this week.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No data for this week."}}, "de": {"stringUnit": {"state": "translated", "value": "Keine Daten für diese Woche."}}}},
+    "Best day": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Best day"}}, "de": {"stringUnit": {"state": "translated", "value": "Bester Tag"}}}},
+    "Toughest day": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Toughest day"}}, "de": {"stringUnit": {"state": "translated", "value": "Härtester Tag"}}}},
+    "Average vs the week before": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Average vs the week before"}}, "de": {"stringUnit": {"state": "translated", "value": "Durchschnitt gegenüber der Vorwoche"}}}},
+    "Recovery by day": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery by day"}}, "de": {"stringUnit": {"state": "translated", "value": "Erholung pro Tag"}}}},
+    "Recovery %@": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery %@"}}, "de": {"stringUnit": {"state": "translated", "value": "Erholung %@"}}}},
     "Slept %lld h %lld min": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Slept %lld h %lld min"}}, "de": {"stringUnit": {"state": "translated", "value": "%1$lld h %2$lld min geschlafen"}}}},
     "Strain target %lld–%lld": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Strain target %lld–%lld"}}, "de": {"stringUnit": {"state": "translated", "value": "Belastungsziel %1$lld–%2$lld"}}}},
-    "Recovery appears once the strap has synced the night.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery appears once the strap has synced the night."}}, "de": {"stringUnit": {"state": "translated", "value": "Die Recovery erscheint, sobald der Strap die Nacht synchronisiert hat."}}}},
+    "Recovery appears once the strap has synced the night.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Recovery appears once the strap has synced the night."}}, "de": {"stringUnit": {"state": "translated", "value": "Die Erholung erscheint, sobald der Strap die Nacht synchronisiert hat."}}}},
     "Stop Alarm": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Stop Alarm"}}, "de": {"stringUnit": {"state": "translated", "value": "Wecker stoppen"}}}},
     "Morning summary": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Morning summary"}}, "de": {"stringUnit": {"state": "translated", "value": "Morgen-Zusammenfassung"}}}},
     "When you stop an alarm: recovery, last night's sleep and today's strain target, once a day.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "When you stop an alarm: recovery, last night's sleep and today's strain target, once a day."}}, "de": {"stringUnit": {"state": "translated", "value": "Wenn du einen Wecker stoppst: Recovery, Schlaf der letzten Nacht und heutiges Belastungsziel, einmal pro Tag."}}}},

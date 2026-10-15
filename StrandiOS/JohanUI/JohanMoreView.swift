@@ -39,6 +39,7 @@ struct JohanMoreView: View {
                 Row(id: "breathe", title: String(localized: "Breathe"), icon: "wind", tint: JohanTheme.sleepViolet, destination: AnyView(BreathingView()))
             ]),
             (String(localized: "Insights"), [
+                Row(id: "week", title: String(localized: "Weekly Review"), icon: "calendar", tint: JohanTheme.recoveryGreen, destination: AnyView(JohanWeekView())),
                 Row(id: "trends", title: String(localized: "Trends"), icon: "chart.line.uptrend.xyaxis", tint: JohanTheme.strainBlue, destination: AnyView(TrendsView())),
                 Row(id: "coach", title: String(localized: "Coach"), icon: "sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(CoachView())),
                 Row(id: "insights", title: String(localized: "Journal & Insights"), icon: "lightbulb.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(InsightsView())),
