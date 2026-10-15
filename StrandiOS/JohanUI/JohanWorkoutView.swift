@@ -2,6 +2,7 @@
 import SwiftUI
 import StrandDesign
 import StrandAnalytics
+import WhoopStore
 
 /// "Workout": start a live workout with the strap and follow it while it records. With nothing running
 /// it offers a sport and a Start button; while a workout runs it shows time, heart rate and Effort with
@@ -19,6 +20,8 @@ struct JohanWorkoutView: View {
     @AppStorage("johanWorkoutSport") private var selectedSport = "Tennis"
     @State private var openWorkout: JohanStrainModel.Workout?
     @State private var confirmEnd = false
+    /// The just-saved workout opened from its summary card.
+    @State private var summaryDetail: WorkoutRow?
     /// Read when End is tapped: why ending now would keep nothing, so the confirmation can say so.
     @State private var endBlocker: AppModel.WorkoutSaveBlocker?
 
@@ -47,6 +50,11 @@ struct JohanWorkoutView: View {
                 if let workout = model.activeWorkout {
                     activeCard(workout)
                 } else {
+                    if let saved = model.lastWorkout {
+                        JohanWorkoutSummaryCard(row: saved,
+                                                onDetails: { summaryDetail = saved },
+                                                onDone: { withAnimation { model.lastWorkout = nil } })
+                    }
                     startCard
                 }
             }
@@ -56,6 +64,12 @@ struct JohanWorkoutView: View {
         .sheet(item: $openWorkout) { w in
             NavigationStack { WorkoutDetailView(row: w.row).environmentObject(repo) }
                 .noopSheetPresentation(largeFirst: true)
+        }
+        .sheet(isPresented: Binding(get: { summaryDetail != nil }, set: { if !$0 { summaryDetail = nil } })) {
+            if let row = summaryDetail {
+                NavigationStack { WorkoutDetailView(row: row).environmentObject(repo) }
+                    .noopSheetPresentation(largeFirst: true)
+            }
         }
         .alert("End this workout?", isPresented: $confirmEnd) {
             Button("Cancel", role: .cancel) { }
