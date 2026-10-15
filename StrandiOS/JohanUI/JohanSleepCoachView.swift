@@ -13,6 +13,11 @@ struct JohanSleepCoachView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var coach = JohanSleepCoachModel()
     @State private var showsPhases = false
+    /// The moment marked on the stage chart, in seconds after onset; a phase row sets it too.
+    @State private var selectedTime: TimeInterval?
+    /// The stage tapped in the stage rows: brought forward in the stage chart and the heart-rate chart.
+    @State private var highlightedStage: SleepStage?
+    @State private var showsNightDetails = false
 
     var body: some View {
         JohanScreen(title: String(localized: "Sleep")) {
@@ -144,7 +149,7 @@ struct JohanSleepCoachView: View {
         if let sleep = coach.sleep, !sleep.isStubNight {
             let night = sleep.night
             sectionTitle(isRecent(night) ? String(localized: "Last night") : night.spanLabel)
-            summaryCard(night).johanStagger(0)
+            summaryCard(sleep).johanStagger(0)
             stagesCard(sleep).johanStagger(1)
             heartRateCard(sleep).johanStagger(2)
         } else {
@@ -157,19 +162,51 @@ struct JohanSleepCoachView: View {
         }
     }
 
-    private func summaryCard(_ night: Night) -> some View {
-        JohanCard {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(hm(night.stages.asleep)).johanNumberFont(44).foregroundStyle(JohanTheme.sleepViolet)
-                    Text("Time asleep, without the minutes you were awake.")
-                        .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
+    private func summaryCard(_ sleep: SleepModel) -> some View {
+        let night = sleep.night
+        return Button {
+            withAnimation(.snappy) { showsNightDetails.toggle() }
+        } label: {
+            JohanCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hm(night.stages.asleep)).johanNumberFont(44).foregroundStyle(JohanTheme.sleepViolet)
+                            Text("Time asleep, without the minutes you were awake.")
+                                .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.down")
+                            .font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                            .rotationEffect(.degrees(showsNightDetails ? 180 : 0))
+                            .accessibilityHidden(true)
+                    }
+                    statsLayout([(String(localized: "Fell asleep"), night.onsetText),
+                                 (String(localized: "Woke up"), night.wakeText)])
+                    if showsNightDetails {
+                        Divider().overlay(JohanTheme.cardBorder)
+                        statsLayout([(String(localized: "In bed"), hm(night.timeInBed)),
+                                     (String(localized: "Awake"), hm(night.stages.awake)),
+                                     (String(localized: "Times awake"), String(Self.wakeUps(sleep.intervals)))])
+                            .transition(.opacity)
+                    }
                 }
-                statsLayout([(String(localized: "Fell asleep"), night.onsetText),
-                             (String(localized: "Woke up"), night.wakeText)])
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(JohanTheme.textPrimary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .buttonStyle(JohanPressStyle())
+        .accessibilityHint(Text(showsNightDetails ? "Hides the details." : "Shows time in bed and how often you woke up."))
+    }
+
+    /// Awake phases between the first and the last stretch of sleep: waking up during the night, not the
+    /// minutes before falling asleep or after the final wake.
+    static func wakeUps(_ intervals: [SleepInterval]) -> Int {
+        let phases = JohanSleepPhases.phases(intervals)
+        guard let first = phases.firstIndex(where: { $0.stage != .awake }),
+              let last = phases.lastIndex(where: { $0.stage != .awake }), first < last else { return 0 }
+        return phases[first...last].filter { $0.stage == .awake }.count
     }
 
     private func stagesCard(_ sleep: SleepModel) -> some View {
@@ -178,7 +215,8 @@ struct JohanSleepCoachView: View {
                 cardHeader(String(localized: "Sleep stages"),
                            String(localized: "Which stage you were in through the night, and how long each lasted."))
                 JohanHypnogram(intervals: sleep.intervals, nightStart: sleep.night.onsetDate,
-                               nightEnd: Date(timeIntervalSince1970: TimeInterval(sleep.night.session.endTs)))
+                               nightEnd: Date(timeIntervalSince1970: TimeInterval(sleep.night.session.endTs)),
+                               selectedTime: $selectedTime, highlightedStage: highlightedStage)
                 stagesVsTypical(sleep)
                 phaseList(sleep)
             }
@@ -213,7 +251,7 @@ struct JohanSleepCoachView: View {
                     }
                     VStack(spacing: 4) {
                         SleepHRChart(nightHR: coach.nightHR, intervals: intervals, origin: origin, span: span,
-                                     night: sleep.night, selectedStage: nil, timeFormatter: Self.timeFormatter)
+                                     night: sleep.night, selectedStage: highlightedStage, timeFormatter: Self.timeFormatter)
                             .frame(height: 110)
                         HStack {
                             Text(timeText(sleep.night.onsetDate.addingTimeInterval(origin)))
@@ -223,6 +261,12 @@ struct JohanSleepCoachView: View {
                         .font(.system(.caption2).monospacedDigit())
                         .foregroundStyle(JohanTheme.textTertiary)
                         .accessibilityHidden(true)
+                    }
+                    Label("Tap or slide along the line for the time and heart rate.", systemImage: "hand.tap")
+                        .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                    if let stage = highlightedStage {
+                        Text(String(localized: "\(stageName(stage)) is highlighted. Tap the stage again to show the whole night."))
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
                     }
                 }
             }
@@ -255,16 +299,76 @@ struct JohanSleepCoachView: View {
                     .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
             }
             let peak = max(s.deep, s.rem, s.light)
-            stageRow(String(localized: "Deep"), last: s.deep, typical: deep, peak: peak, stage: .deep, index: 0)
-            stageRow("REM", last: s.rem, typical: rem, peak: peak, stage: .rem, index: 1)
-            stageRow(String(localized: "Light"), last: s.light, typical: light, peak: peak, stage: .light, index: 2)
-            HStack(spacing: 8) {
-                Circle().fill(JohanTheme.stageColor(.awake)).frame(width: 8, height: 8).accessibilityHidden(true)
-                Text("Awake").font(.system(.subheadline, weight: .semibold))
-                Spacer()
-                Text(hm(s.awake)).johanNumberFont(15)
+            let phases = JohanSleepPhases.phases(sleep.intervals)
+            stageButton(.deep, phases: phases, night: s) {
+                stageRow(String(localized: "Deep"), last: s.deep, typical: deep, peak: peak, stage: .deep, index: 0)
             }
+            stageButton(.rem, phases: phases, night: s) {
+                stageRow("REM", last: s.rem, typical: rem, peak: peak, stage: .rem, index: 1)
+            }
+            stageButton(.light, phases: phases, night: s) {
+                stageRow(String(localized: "Light"), last: s.light, typical: light, peak: peak, stage: .light, index: 2)
+            }
+            stageButton(.awake, phases: phases, night: s) {
+                HStack(spacing: 8) {
+                    Circle().fill(JohanTheme.stageColor(.awake)).frame(width: 8, height: 8).accessibilityHidden(true)
+                    Text("Awake").font(.system(.subheadline, weight: .semibold))
+                    Spacer()
+                    Text(hm(s.awake)).johanNumberFont(15)
+                }
+            }
+            Text("Tap a stage to highlight it in the charts.")
+                .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
         }
+    }
+
+    /// A stage row as a toggle: tapping brings that stage forward in the stage and heart-rate charts and
+    /// opens a line with its share of the night, how many phases it came in and the longest one.
+    private func stageButton<Row: View>(_ stage: SleepStage, phases: [JohanSleepPhases.Phase], night s: Stages,
+                                        @ViewBuilder row: () -> Row) -> some View {
+        let selected = highlightedStage == stage
+        return Button {
+            withAnimation(.snappy) { highlightedStage = selected ? nil : stage }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                row()
+                if selected {
+                    Text(stageDetail(stage, phases: phases, night: s))
+                        .font(.system(.caption))
+                        .foregroundStyle(JohanTheme.textSecondary)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.vertical, 6).padding(.horizontal, 8)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(selected ? JohanTheme.stageColor(stage).opacity(0.14) : Color.clear))
+            .contentShape(Rectangle())
+            .foregroundStyle(JohanTheme.textPrimary)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, -8)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// "23% of sleep · 4 phases · longest 52 min". Awake is measured against the time in bed, since it is
+    /// not part of sleep.
+    private func stageDetail(_ stage: SleepStage, phases: [JohanSleepPhases.Phase], night s: Stages) -> String {
+        let own = phases.filter { $0.stage == stage }
+        let count = String(own.count)
+        let longest = JohanSleepText.phaseDuration(own.map(\.minutes).max() ?? 0)
+        let minutes: Double
+        switch stage {
+        case .deep: minutes = s.deep
+        case .rem: minutes = s.rem
+        case .light: minutes = s.light
+        case .awake: minutes = s.awake
+        }
+        if stage == .awake {
+            let pct = String(Int((minutes / max(1, s.total) * 100).rounded()))
+            return String(localized: "\(pct)% of time in bed · \(count) phases · longest \(longest)")
+        }
+        let pct = String(Int((minutes / max(1, s.asleep) * 100).rounded()))
+        return String(localized: "\(pct)% of sleep · \(count) phases · longest \(longest)")
     }
 
     static let minTypicalNights = 3
@@ -360,7 +464,17 @@ struct JohanSleepCoachView: View {
                 if showsPhases {
                     VStack(spacing: 0) {
                         ForEach(Array(phases.enumerated()), id: \.offset) { i, phase in
-                            phaseRow(phase, nightStart: sleep.night.onsetDate)
+                            Button {
+                                // Marks the phase on the stage chart above, which names it under the chart.
+                                selectedTime = (phase.start + phase.end) / 2
+                            } label: {
+                                phaseRow(phase, nightStart: sleep.night.onsetDate)
+                                    .background(isMarked(phase) ? JohanTheme.stageColor(phase.stage).opacity(0.14) : Color.clear)
+                                    .contentShape(Rectangle())
+                                    .foregroundStyle(JohanTheme.textPrimary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(isMarked(phase) ? .isSelected : [])
                             if i < phases.count - 1 { Divider().overlay(JohanTheme.cardBorder) }
                         }
                     }
@@ -368,6 +482,11 @@ struct JohanSleepCoachView: View {
                 }
             }
         }
+    }
+
+    private func isMarked(_ phase: JohanSleepPhases.Phase) -> Bool {
+        guard let t = selectedTime else { return false }
+        return t >= phase.start && t < phase.end
     }
 
     private func phaseRow(_ phase: JohanSleepPhases.Phase, nightStart: Date) -> some View {
@@ -396,12 +515,7 @@ struct JohanSleepCoachView: View {
         }
     }
 
-    /// Under a minute reads in seconds, so a short wake-up is not shown as "0 min".
-    private func phaseDuration(_ minutes: Double) -> String {
-        guard minutes < 1 else { return hm(minutes) }
-        let sec = String(Int((minutes * 60).rounded()))
-        return String(localized: "\(sec) s")
-    }
+    private func phaseDuration(_ minutes: Double) -> String { JohanSleepText.phaseDuration(minutes) }
 
     // MARK: Consistency
 
@@ -422,7 +536,12 @@ struct JohanSleepCoachView: View {
                 }
                 let tail = Array(c.series.suffix(30))
                 if tail.count >= 2 {
-                    JohanSparkline(values: tail, color: JohanTheme.sleepViolet, height: 40)
+                    JohanSparkline(values: tail, color: JohanTheme.sleepViolet, height: 40) { i, value in
+                        let pct = String(Int(value.rounded()))
+                        let back = tail.count - 1 - i
+                        return back == 0 ? String(localized: "\(pct)% · latest night")
+                                         : String(localized: "\(pct)% · \(String(back)) nights before the latest")
+                    }
                     Text(String(localized: "Last \(String(tail.count)) nights"))
                         .font(.system(.caption2)).foregroundStyle(JohanTheme.textTertiary)
                 }
@@ -477,11 +596,7 @@ struct JohanSleepCoachView: View {
         return clock((m + 1440) % 1440)
     }
 
-    private func hm(_ minutes: Double) -> String {
-        let t = max(0, Int(minutes.rounded()))
-        let h = String(t / 60), m = String(t % 60)
-        return t >= 60 ? String(localized: "\(h) h \(m) min") : String(localized: "\(m) min")
-    }
+    private func hm(_ minutes: Double) -> String { JohanSleepText.hm(minutes) }
 
     private func timeText(_ d: Date) -> String {
         d.formatted(.dateTime.hour().minute().locale(AppLanguage.activeLocale))

@@ -198,11 +198,18 @@ struct JohanPulsingHeart: View {
 }
 
 /// Line over `values`, drawn in with a trim animation on first appearance.
+///
+/// With a `readout`, the line is interactive: a tap or a press-and-drag (`touchScrub`) marks the nearest
+/// point and the text `readout(index, value)` returns is shown above the line.
 struct JohanSparkline: View {
     let values: [Double]
     var color: Color = JohanTheme.recoveryRed
     var height: CGFloat = 36
+    var readout: ((Int, Double) -> String)?
     @State private var drawn = 0.0
+    @State private var scrubX: CGFloat?
+    /// The point nearest the finger, or nil with nothing marked.
+    @State private var scrubIndex: Int?
     private let motion = JohanStill()
 
     private struct Line: Shape {
@@ -221,14 +228,56 @@ struct JohanSparkline: View {
     }
 
     var body: some View {
-        Line(values: values)
-            .trim(from: 0, to: drawn)
-            .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            .frame(height: height)
-            .onAppear {
-                if motion.isStill { drawn = 1 } else { withAnimation(JohanTheme.Motion.sparkDraw) { drawn = 1 } }
+        VStack(alignment: .leading, spacing: 6) {
+            if let readout {
+                Group {
+                    if let i = scrubIndex {
+                        Text(readout(i, values[i])).font(.system(.footnote, weight: .semibold))
+                    } else {
+                        Label("Tap or slide along the line for a single night.", systemImage: "hand.tap")
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                    }
+                }
+                .frame(minHeight: 18, alignment: .leading)
             }
-            .accessibilityHidden(true)
+            Line(values: values)
+                .trim(from: 0, to: drawn)
+                .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .frame(height: height)
+                .overlay { if readout != nil { marker } }
+        }
+        .onAppear {
+            if motion.isStill { drawn = 1 } else { withAnimation(JohanTheme.Motion.sparkDraw) { drawn = 1 } }
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// The dot on the marked point, plus the touch target that moves it.
+    private var marker: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            ZStack(alignment: .topLeading) {
+                if let i = scrubIndex, values.count >= 2, let lo = values.min(), let hi = values.max() {
+                    let px = w * CGFloat(i) / CGFloat(values.count - 1)
+                    let py = h * (1 - CGFloat((values[i] - lo) / max(hi - lo, 1)))
+                    Rectangle().fill(JohanTheme.textTertiary).frame(width: 1, height: h).offset(x: px - 0.5)
+                    Circle().fill(color).frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(JohanTheme.background, lineWidth: 2))
+                        .offset(x: px - 4.5, y: py - 4.5)
+                }
+                Color.clear
+                    .touchScrub(x: Binding(
+                        get: { scrubX },
+                        set: { newX in
+                            scrubX = newX
+                            scrubIndex = newX.map { x in
+                                guard values.count >= 2 else { return 0 }
+                                let step = w / CGFloat(values.count - 1)
+                                return min(values.count - 1, max(0, Int((x / max(step, 1)).rounded())))
+                            }
+                        }))
+            }
+        }
     }
 }
 
@@ -366,6 +415,9 @@ struct JohanGrowBars: View {
     /// Y-axis tick text; `formatValue` when nil.
     var formatAxis: ((Double) -> String)?
     @State private var factors: [Double] = []
+    /// The bar a tap or press-and-drag marked; its date and value show above the plot.
+    @State private var selected: Int?
+    @State private var scrubX: CGFloat?
     private let motion = JohanStill()
 
     var body: some View {
@@ -374,18 +426,47 @@ struct JohanGrowBars: View {
             ForEach(Array(bars.enumerated()), id: \.offset) { i, bar in
                 if let v = bar.value {
                     BarMark(x: .value("Day", i), y: .value("Value", v * (factors.indices.contains(i) ? factors[i] : 0)))
-                        .foregroundStyle(color)
+                        .foregroundStyle(color.opacity(selected == nil || selected == i ? 1 : 0.35))
                         .cornerRadius(3)
                         .accessibilityLabel(bar.spokenLabel)
                         .accessibilityValue(formatValue(v))
                 }
             }
+            if let i = selected, bars.indices.contains(i) {
+                RuleMark(x: .value("Day", i))
+                    .foregroundStyle(JohanTheme.textTertiary.opacity(0.6))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .annotation(position: .top, spacing: 2,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        selectionLabel(bars[i])
+                    }
+            }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                let plot = proxy.plotFrame.map { geo[$0] } ?? .zero
+                // Covers the whole chart; the finger's x is moved into the plot's own space, which is the
+                // space `value(atX:)` reads.
+                Color.clear
+                    .touchScrub(x: Binding(
+                        get: { scrubX },
+                        set: { newX in
+                            scrubX = newX
+                            selected = newX.flatMap { x in
+                                guard let v: Double = proxy.value(atX: x - plot.minX) else { return nil }
+                                let i = Int(v.rounded())
+                                return bars.indices.contains(i) ? i : nil
+                            }
+                        }))
+            }
         }
         .chartXScale(domain: -0.5...(Double(max(bars.count, 1)) - 0.5))
         .chartYScale(domain: 0...top)
         .chartXAxis {
+            // Each label sits on its bar's own index. `centered: true` would shift it half a step to the
+            // middle of the gap after the bar, so a letter read as the next day's.
             AxisMarks(values: Array(bars.indices)) { v in
-                AxisValueLabel(centered: true) {
+                AxisValueLabel(anchor: .top) {
                     if let i = v.as(Int.self), bars.indices.contains(i) {
                         Text(bars[i].label).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
                     }
@@ -407,6 +488,20 @@ struct JohanGrowBars: View {
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .onAppear { grow() }
         .onChange(of: bars.count) { _, _ in grow() }
+    }
+
+    private func selectionLabel(_ bar: Bar) -> some View {
+        VStack(spacing: 1) {
+            Text(bar.value.map(formatValue) ?? String(localized: "No data"))
+                .font(.system(.caption, weight: .semibold).monospacedDigit())
+                .foregroundStyle(JohanTheme.textPrimary)
+            Text(bar.spokenLabel)
+                .font(.system(.caption2))
+                .foregroundStyle(JohanTheme.textSecondary)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(JohanTheme.background.opacity(0.9))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(JohanTheme.cardBorder, lineWidth: 0.5)))
     }
 
     private func grow() {

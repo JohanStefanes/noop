@@ -11,7 +11,8 @@ import WhoopStore
 /// One view for both places the night is drawn: the Sleep tab (`SleepView`) and the Today-hosted stage
 /// card (`StageDetailView`). Each previously carried an identical private copy, so a change to one
 /// silently missed the other. Pointer hover shows a crosshair and dot on the nearest one-minute bucket
-/// with its clock time and bpm, the same readout the Today HR chart gives on the Mac.
+/// with its clock time and bpm, the same readout the Today HR chart gives on the Mac; on iOS a tap or a
+/// press-and-drag shows it (`touchScrub`).
 struct SleepHRChart: View {
     /// The night's one-minute sleeping-HR buckets (unfiltered; trimmed to the visible window here).
     let nightHR: [HRBucket]
@@ -165,6 +166,8 @@ struct SleepHRChart: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
+            // Touch: tap or press-and-drag shows the same readout the pointer does.
+            .touchScrub(x: $hoverX)
             .onContinuousHover(coordinateSpace: .local) { phase in
                 // Non-animating, as in OverviewHRChart: an animated update makes the readout lag the pointer.
                 var tx = Transaction()

@@ -15,11 +15,19 @@ import StrandDesign
 /// names as "Fell asleep" and "Woke up", so its flags can never disagree with those figures. Brief
 /// fragments are absorbed for display only (`Hypnogram.displaySmoothed`); the stage totals and the phase
 /// list keep the raw timeline.
+///
+/// Interactive: a tap or a press-and-drag (`touchScrub`) marks a moment, and the line under the chart names
+/// the RAW phase at that moment (`JohanSleepPhases`) with its clock times and length, so a stretch the
+/// display absorbed can still be read. `highlightedStage` dims every other stage.
 struct JohanHypnogram: View {
     let intervals: [SleepInterval]
     let nightStart: Date
     let nightEnd: Date
     var height: CGFloat = 200
+    /// The marked moment, in seconds after `nightStart`. Owned by the caller so a phase list can set it.
+    var selectedTime: Binding<TimeInterval?> = .constant(nil)
+    /// A stage to bring forward; the others are drawn faintly.
+    var highlightedStage: SleepStage?
 
     @State private var reveal = 0.0
     private let motion = JohanStill()
@@ -64,12 +72,22 @@ struct JohanHypnogram: View {
                             .padding(.top, Self.flagHeight)
                         flag(icon: "moon.fill", time: nightStart, x: 0, width: w)
                         flag(icon: "sun.max.fill", time: nightEnd, x: w, width: w)
+                        if let t = selectedTime.wrappedValue {
+                            selectionRule(x: x(t, w))
+                        }
+                        // The touch target is the plot only, not the flags above it.
+                        Color.clear
+                            .frame(width: w, height: height)
+                            .touchScrub(x: scrubX(width: w))
+                            .padding(.top, Self.flagHeight)
                     }
                 }
                 .frame(height: height + Self.flagHeight)
             }
             hourAxis
                 .padding(.leading, Self.axisWidth + 8)
+            readout
+                .padding(.top, 4)
         }
         .onAppear {
             guard reveal == 0 else { return }
@@ -77,6 +95,67 @@ struct JohanHypnogram: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(localized: "Sleep stages from \(timeText(nightStart)) to \(timeText(nightEnd))"))
+        .accessibilityValue(selectedPhase.map(phaseSentence) ?? "")
+    }
+
+    // MARK: Selection
+
+    /// The finger's x, kept as a time so the mark stays on its moment when the width changes.
+    private func scrubX(width w: CGFloat) -> Binding<CGFloat?> {
+        Binding(
+            get: { selectedTime.wrappedValue.map { x($0, w) } },
+            set: { newX in
+                selectedTime.wrappedValue = newX.map { min(span, max(0, TimeInterval($0 / max(1, w)) * span)) }
+            })
+    }
+
+    /// The raw phase under the marked moment, or the nearest one when the moment falls in a gap.
+    private var selectedPhase: JohanSleepPhases.Phase? {
+        guard let t = selectedTime.wrappedValue else { return nil }
+        let phases = JohanSleepPhases.phases(intervals)
+        return phases.first { t >= $0.start && t < $0.end }
+            ?? phases.min { min(abs($0.start - t), abs($0.end - t)) < min(abs($1.start - t), abs($1.end - t)) }
+    }
+
+    private func selectionRule(x: CGFloat) -> some View {
+        Rectangle()
+            .fill(JohanTheme.textPrimary.opacity(0.8))
+            .frame(width: 1.5, height: height)
+            .offset(x: x - 0.75, y: Self.flagHeight)
+            .allowsHitTesting(false)
+    }
+
+    /// One line under the chart: the marked phase, or how to mark one.
+    @ViewBuilder private var readout: some View {
+        Group {
+            if let phase = selectedPhase {
+                HStack(spacing: 8) {
+                    Circle().fill(JohanTheme.stageColor(phase.stage)).frame(width: 8, height: 8)
+                    Text(name(phase.stage)).font(.system(.subheadline, weight: .semibold))
+                    Text("\(clock(phase.start)) – \(clock(phase.end))")
+                        .font(.system(.subheadline).monospacedDigit())
+                        .foregroundStyle(JohanTheme.textSecondary)
+                    Spacer(minLength: 8)
+                    Text(JohanSleepText.phaseDuration(phase.minutes))
+                        .font(.system(.subheadline, weight: .semibold).monospacedDigit())
+                }
+            } else {
+                Label("Tap or slide along the chart to see each phase.", systemImage: "hand.tap")
+                    .font(.system(.caption))
+                    .foregroundStyle(JohanTheme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .padding(.leading, Self.axisWidth + 8)
+        .accessibilityHidden(true)
+    }
+
+    private func clock(_ offset: TimeInterval) -> String { timeText(nightStart.addingTimeInterval(offset)) }
+
+    private func phaseSentence(_ phase: JohanSleepPhases.Phase) -> String {
+        let n = name(phase.stage), from = clock(phase.start), to = clock(phase.end)
+        let length = JohanSleepText.phaseDuration(phase.minutes)
+        return String(localized: "\(n) from \(from) to \(to), \(length)")
     }
 
     // MARK: Drawing
@@ -118,8 +197,9 @@ struct JohanHypnogram: View {
             let x0 = x(iv.start, w), x1 = x(iv.end, w)
             let rect = CGRect(x: x0, y: rowY(iv.stage, h) - Self.barHeight / 2,
                               width: max(3, x1 - x0), height: Self.barHeight)
+            let faded = highlightedStage.map { $0 != iv.stage } ?? false
             ctx.fill(Path(roundedRect: rect, cornerRadius: Self.barHeight / 2.5),
-                     with: .color(JohanTheme.stageColor(iv.stage)))
+                     with: .color(JohanTheme.stageColor(iv.stage).opacity(faded ? 0.22 : 1)))
         }
     }
 
@@ -204,6 +284,25 @@ struct JohanHypnogram: View {
 
     private func timeText(_ d: Date) -> String {
         d.formatted(.dateTime.hour().minute().locale(AppLanguage.activeLocale))
+    }
+}
+#endif
+
+#if os(iOS)
+/// Duration wording shared by the Sleep page and its charts, so a phase reads the same in the list and
+/// under the chart.
+enum JohanSleepText {
+    static func hm(_ minutes: Double) -> String {
+        let t = max(0, Int(minutes.rounded()))
+        let h = String(t / 60), m = String(t % 60)
+        return t >= 60 ? String(localized: "\(h) h \(m) min") : String(localized: "\(m) min")
+    }
+
+    /// Under a minute reads in seconds, so a short wake-up is not shown as "0 min".
+    static func phaseDuration(_ minutes: Double) -> String {
+        guard minutes < 1 else { return hm(minutes) }
+        let sec = String(Int((minutes * 60).rounded()))
+        return String(localized: "\(sec) s")
     }
 }
 #endif
