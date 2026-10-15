@@ -251,6 +251,8 @@ targets:
         # hard-coded in Swift; stays in sync with the application-groups entitlement (both $(APP_GROUP_ID)).
         AppGroupIdentifier: "$(APP_GROUP_ID)"
         LSApplicationCategoryType: public.app-category.healthcare-fitness
+        # JohanUI alarms (AlarmKit, iOS 26): asked the first time an alarm is switched on.
+        NSAlarmKitUsageDescription: "Alarms you set here ring like the Clock app's, and can also make your strap vibrate."
         UILaunchScreen: {}
         # Alternate app icons (v3 "Titanium & Gold"). The primary icon stays the asset-catalog
         # AppIcon (machined titanium); the alternate "AppIcon-Navy" (blued titanium) is declared

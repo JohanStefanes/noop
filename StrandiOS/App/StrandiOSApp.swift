@@ -165,6 +165,9 @@ struct StrandiOSApp: App {
         let mirror = WatchWorkoutMirror(model: model)
         mirror.arm()
         _watchWorkoutMirror = State(initialValue: mirror)
+        // JohanUI alarms: watch AlarmKit from process start, so a ring while NOOP runs in the background
+        // still plays the strap buzz.
+        if #available(iOS 26.0, *) { JohanAlarmStore.shared.observe() }
         // Register a separate, always-on-while-authorized refresh task for Apple Health write-back.
         // The operation is write-only and bounded to the bridge's recent window; fresh BLE offloads still
         // use the immediate hook below. BGTaskScheduler chooses the actual wake time.
