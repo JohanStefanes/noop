@@ -3,9 +3,10 @@ import SwiftUI
 import Charts
 import StrandDesign
 import StrandAnalytics
+import WhoopStore
 
-/// "Schlaf-Coach": tonight's bedtime from sleep need + sleep debt (+ body clock), last night's hypnogram
-/// and the sleep-debt trend.
+/// "Schlaf-Coach": tonight's bedtime from sleep need + sleep debt (+ body clock), last night (heart rate,
+/// hypnogram, stages against the wearer's typical), sleep consistency and the sleep-debt trend.
 struct JohanSleepCoachView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var model: AppModel
@@ -21,7 +22,10 @@ struct JohanSleepCoachView: View {
             }
             if coach.loaded {
                 nightCard.johanStagger(1)
-                debtCard.johanStagger(2)
+                if let sleep = coach.sleep, sleep.consistency.latest != nil {
+                    consistencyCard(sleep).johanStagger(2)
+                }
+                debtCard.johanStagger(3)
             }
         }
         .task { await coach.load(repo: repo, circadian: model.circadianPhase) }
@@ -103,21 +107,153 @@ struct JohanSleepCoachView: View {
     private var nightCard: some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 12) {
-                JohanOverline(String(localized: "Last night"))
-                if let night = coach.night {
-                    Text(String(localized: "\(timeText(night.start)) – \(timeText(night.end)) · \(hm(night.stages.asleep)) asleep"))
+                if let sleep = coach.sleep, !sleep.isStubNight {
+                    let night = sleep.night
+                    JohanOverline(isRecent(night) ? String(localized: "Last night") : night.spanLabel)
+                    Text(String(localized: "\(night.onsetText) – \(night.wakeText) · \(hm(night.stages.asleep)) asleep"))
                         .font(.system(.subheadline, weight: .semibold))
-                    Hypnogram(intervals: night.intervals, height: 130, showsStageAxis: true,
-                              showsHover: false, nightStart: night.start, showsTimeAxis: true, filled: true)
+                    heartRate(sleep)
+                    Hypnogram(intervals: sleep.intervals, height: 130, showsStageAxis: true,
+                              showsHover: false, nightStart: night.onsetDate, showsTimeAxis: true, filled: true)
                         .johanRevealLeftToRight()
-                    statsLayout([(String(localized: "Deep"), hm(night.stages.deep)), ("REM", hm(night.stages.rem)),
-                                 (String(localized: "Light"), hm(night.stages.light)), (String(localized: "Awake"), hm(night.stages.awake))])
+                    stagesVsTypical(sleep)
                 } else {
+                    JohanOverline(String(localized: "Last night"))
                     Text("No night recorded yet. Wear the strap overnight and your sleep will show up here.")
                         .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
                 }
             }
         }
+    }
+
+    /// Woken from today, so "Last night" is true; an older newest night is named by its own date instead.
+    private func isRecent(_ night: Night) -> Bool {
+        Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(night.session.endTs)))
+    }
+
+    // MARK: Night heart rate
+
+    @ViewBuilder
+    private func heartRate(_ sleep: SleepModel) -> some View {
+        let start = TimeInterval(sleep.night.session.effectiveStartTs)
+        let bpms = coach.nightHR.filter { TimeInterval($0.ts) >= start }.map(\.bpm)
+        if bpms.count >= 2, let low = bpms.min() {
+            let intervals = sleep.intervals.sorted { $0.start < $1.start }
+            let origin = intervals.first?.start ?? 0
+            let span = max(1, (intervals.map(\.end).max() ?? 1) - origin)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Heart rate").font(.system(.caption, weight: .semibold)).foregroundStyle(JohanTheme.textSecondary)
+                    Spacer()
+                    Text(String(localized: "Lowest \(String(Int(low.rounded()))) bpm"))
+                        .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                }
+                SleepHRChart(nightHR: coach.nightHR, intervals: intervals, origin: origin, span: span,
+                             night: sleep.night, selectedStage: nil, timeFormatter: Self.timeFormatter)
+                    .frame(height: 96)
+            }
+        }
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = AppLanguage.activeLocale
+        f.setLocalizedDateFormatFromTemplate("jmm")
+        return f
+    }()
+
+    // MARK: Stages vs typical
+
+    /// Deep, REM and light against the wearer's own per-stage means (`SleepModel.typical*Min`, the figures
+    /// the Sleep tab's "Stages vs typical" card reads).
+    private func stagesVsTypical(_ sleep: SleepModel) -> some View {
+        let s = sleep.night.stages
+        return VStack(alignment: .leading, spacing: 10) {
+            Divider().overlay(JohanTheme.cardBorder)
+            stageRow(String(localized: "Deep"), last: s.deep, typical: sleep.typicalDeepMin, stage: .deep, index: 0)
+            stageRow("REM", last: s.rem, typical: sleep.typicalRemMin, stage: .rem, index: 1)
+            stageRow(String(localized: "Light"), last: s.light, typical: sleep.typicalLightMin, stage: .light, index: 2)
+            HStack {
+                Text("Awake").font(.system(.subheadline)).foregroundStyle(JohanTheme.textSecondary)
+                Spacer()
+                Text(hm(s.awake)).johanNumberFont(15).foregroundStyle(JohanTheme.textSecondary)
+            }
+            if sleep.typicalDeepMin != nil {
+                Text("The line marks your typical night.").font(.system(.caption2)).foregroundStyle(JohanTheme.textTertiary)
+            }
+        }
+    }
+
+    private func stageRow(_ label: String, last: Double, typical: Double?, stage: SleepStage, index: Int) -> some View {
+        let color = StrandPalette.sleepStageColor(stage)
+        let scale = max(1, max(last, typical ?? 0) * 1.15)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle().fill(color).frame(width: 8, height: 8).accessibilityHidden(true)
+                Text(label).font(.system(.subheadline, weight: .semibold))
+                Spacer()
+                Text(hm(last)).johanNumberFont(15)
+                if let typical, typical > 0 {
+                    let diff = last - typical
+                    Text((diff >= 0 ? "+" : "−") + hm(abs(diff)))
+                        .font(.system(.caption, weight: .semibold))
+                        .foregroundStyle(abs(diff) < 5 ? JohanTheme.textSecondary
+                                         : diff > 0 ? JohanTheme.recoveryGreen : JohanTheme.recoveryYellow)
+                        .frame(minWidth: 56, alignment: .trailing)
+                }
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(JohanTheme.track)
+                    Capsule().fill(color).frame(width: max(4, w * CGFloat(min(1, last / scale))))
+                        .johanRevealLeftToRight()
+                    if let typical, typical > 0 {
+                        Rectangle().fill(JohanTheme.textPrimary)
+                            .frame(width: 2, height: 14)
+                            .position(x: w * CGFloat(min(1, typical / scale)), y: 4)
+                    }
+                }
+            }
+            .frame(height: 8)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(typical.map { String(localized: "\(label): \(hm(last)), typical \(hm($0))") }
+                            ?? String(localized: "\(label): \(hm(last))"))
+    }
+
+    // MARK: Consistency
+
+    /// The Sleep tab's consistency metric (`SleepModel.consistency`): how steady bed and wake times are.
+    private func consistencyCard(_ sleep: SleepModel) -> some View {
+        let c = sleep.consistency
+        let latest = c.latest ?? 0
+        return JohanCard {
+            VStack(alignment: .leading, spacing: 10) {
+                JohanOverline(String(localized: "Sleep consistency"))
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(Int(latest.rounded()))%")
+                        .johanNumberFont(34)
+                        .foregroundStyle(JohanTheme.recoveryColor(latest))
+                    Spacer()
+                    Text(consistencyCaption(c)).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                }
+                let tail = Array(c.series.suffix(30))
+                if tail.count >= 2 {
+                    JohanSparkline(values: tail, color: JohanTheme.sleepViolet, height: 40)
+                }
+                Text("How regular your bed and wake times are. Steady times make sleep more restorative.")
+                    .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+            }
+        }
+    }
+
+    private func consistencyCaption(_ c: SleepModel.Metric) -> String {
+        if let carried = SleepModel.carriedMetricCaption(latestDay: c.latestDay, latest: c.latest) { return carried }
+        guard let latest = c.latest, let typical = c.typical else { return "" }
+        let diff = Int((latest - typical).rounded())
+        let sign = diff >= 0 ? "+" : "−", magnitude = String(abs(diff)), suffix = "%"
+        return String(localized: "\(sign)\(magnitude)\(suffix) vs typical")
     }
 
     // MARK: Debt trend
