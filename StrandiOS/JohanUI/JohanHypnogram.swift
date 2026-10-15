@@ -6,6 +6,11 @@ import StrandDesign
 /// thin risers where the night changes level, hour marks underneath and the moments of falling asleep and
 /// waking flagged above, so the shape of the night reads at a glance.
 ///
+/// A real night arrives as dozens of short runs. Drawn at a phone's width they crowd into a comb, so the
+/// chart absorbs every run narrower than `minBarWidth` points into its neighbours, whatever the night's
+/// length (never less than five minutes). That is display only: the stage totals and the phase list keep
+/// the raw timeline, and the phase list is where the short stretches stay readable.
+///
 /// Draws `intervals` (seconds after `nightStart`) across `nightStart ... nightEnd`, the same span the card
 /// names as "Fell asleep" and "Woke up", so its flags can never disagree with those figures. Brief
 /// fragments are absorbed for display only (`Hypnogram.displaySmoothed`); the stage totals and the phase
@@ -14,7 +19,7 @@ struct JohanHypnogram: View {
     let intervals: [SleepInterval]
     let nightStart: Date
     let nightEnd: Date
-    var height: CGFloat = 170
+    var height: CGFloat = 200
 
     @State private var reveal = 0.0
     private let motion = JohanStill()
@@ -23,15 +28,25 @@ struct JohanHypnogram: View {
     private static let levels: [SleepStage] = [.awake, .rem, .light, .deep]
     private static let axisWidth: CGFloat = 46
     private static let flagHeight: CGFloat = 30
-    private static let barHeight: CGFloat = 9
+    private static let barHeight: CGFloat = 10
+    /// The narrowest stage run the chart draws on its own, in points.
+    /// Four points keeps every sleep cycle and the early-morning wake-ups of a real nine-hour night (about
+    /// twenty bars at phone width); eight merged whole cycles into one bar, five minutes left a comb of 27.
+    static let minBarWidth: CGFloat = 4
 
     private var span: TimeInterval { max(60, nightEnd.timeIntervalSince(nightStart)) }
 
-    private var shown: [SleepInterval] {
+    /// Shortest run, in seconds, that stays its own bar at `width` points across `span` seconds.
+    static func minRunSeconds(span: TimeInterval, width: CGFloat) -> TimeInterval {
+        guard width > 0 else { return 300 }
+        return max(300, span * TimeInterval(minBarWidth / width))
+    }
+
+    private func shown(width: CGFloat) -> [SleepInterval] {
         let sorted = intervals.sorted { $0.start < $1.start }
             .map { SleepInterval(stage: $0.stage, start: max(0, $0.start), end: min(span, $0.end)) }
             .filter { $0.end > $0.start }
-        return Hypnogram.displaySmoothed(sorted, minDuration: 300)
+        return Hypnogram.displaySmoothed(sorted, minDuration: Self.minRunSeconds(span: span, width: width))
     }
 
     var body: some View {
@@ -90,7 +105,7 @@ struct JohanHypnogram: View {
             tick.addLine(to: CGPoint(x: hx, y: h))
             ctx.stroke(tick, with: .color(JohanTheme.track.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
         }
-        let ivs = shown
+        let ivs = shown(width: w)
         // Risers first, so the bars sit on top of them.
         var risers = Path()
         for (a, b) in zip(ivs, ivs.dropFirst()) {
@@ -98,7 +113,7 @@ struct JohanHypnogram: View {
             risers.move(to: CGPoint(x: rx, y: rowY(a.stage, h)))
             risers.addLine(to: CGPoint(x: rx, y: rowY(b.stage, h)))
         }
-        ctx.stroke(risers, with: .color(JohanTheme.textTertiary), lineWidth: 1.5)
+        ctx.stroke(risers, with: .color(JohanTheme.textTertiary.opacity(0.55)), lineWidth: 1)
         for iv in ivs {
             let x0 = x(iv.start, w), x1 = x(iv.end, w)
             let rect = CGRect(x: x0, y: rowY(iv.stage, h) - Self.barHeight / 2,

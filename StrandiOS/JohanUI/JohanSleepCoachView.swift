@@ -239,17 +239,25 @@ struct JohanSleepCoachView: View {
     // MARK: Stages vs typical
 
     /// Deep, REM and light against the wearer's own per-stage means (`SleepModel.typical*Min`, the figures
-    /// the Sleep tab's "Stages vs typical" card reads).
+    /// the Sleep tab's "Stages vs typical" card reads). A mean over fewer than `minTypicalNights` nights is
+    /// mostly last night itself, so it is not shown as a comparison until there are enough.
     private func stagesVsTypical(_ sleep: SleepModel) -> some View {
         let s = sleep.night.stages
+        let deep = typical(sleep.typicalDeepMin, \.deepMin)
+        let rem = typical(sleep.typicalRemMin, \.remMin)
+        let light = typical(sleep.typicalLightMin, \.lightMin)
         return VStack(alignment: .leading, spacing: 10) {
             Divider().overlay(JohanTheme.cardBorder)
-            if sleep.typicalDeepMin != nil {
+            if deep != nil || rem != nil || light != nil {
                 stageLegend
+            } else {
+                Text(String(localized: "The comparison with your typical night appears after \(String(Self.minTypicalNights)) nights."))
+                    .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
             }
-            stageRow(String(localized: "Deep"), last: s.deep, typical: sleep.typicalDeepMin, stage: .deep, index: 0)
-            stageRow("REM", last: s.rem, typical: sleep.typicalRemMin, stage: .rem, index: 1)
-            stageRow(String(localized: "Light"), last: s.light, typical: sleep.typicalLightMin, stage: .light, index: 2)
+            let peak = max(s.deep, s.rem, s.light)
+            stageRow(String(localized: "Deep"), last: s.deep, typical: deep, peak: peak, stage: .deep, index: 0)
+            stageRow("REM", last: s.rem, typical: rem, peak: peak, stage: .rem, index: 1)
+            stageRow(String(localized: "Light"), last: s.light, typical: light, peak: peak, stage: .light, index: 2)
             HStack(spacing: 8) {
                 Circle().fill(JohanTheme.stageColor(.awake)).frame(width: 8, height: 8).accessibilityHidden(true)
                 Text("Awake").font(.system(.subheadline, weight: .semibold))
@@ -257,6 +265,14 @@ struct JohanSleepCoachView: View {
                 Text(hm(s.awake)).johanNumberFont(15)
             }
         }
+    }
+
+    static let minTypicalNights = 3
+
+    /// `mean` when at least `minTypicalNights` days carry the stage (the same days `typicalStageMin` averages).
+    private func typical(_ mean: Double?, _ key: KeyPath<DailyMetric, Double?>) -> Double? {
+        guard let mean, repo.days.filter({ ($0[keyPath: key] ?? 0) > 0 }).count >= Self.minTypicalNights else { return nil }
+        return mean
     }
 
     /// Key for the rows below: what the bar, the white line and the signed figure each stand for.
@@ -277,9 +293,12 @@ struct JohanSleepCoachView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func stageRow(_ label: String, last: Double, typical: Double?, stage: SleepStage, index: Int) -> some View {
+    /// With a typical, each bar is scaled to its own stage so the white line has room either side; without
+    /// one, every bar shares the night's longest stage as full width, so the bars compare the stages.
+    private func stageRow(_ label: String, last: Double, typical: Double?, peak: Double, stage: SleepStage,
+                          index: Int) -> some View {
         let color = JohanTheme.stageColor(stage)
-        let scale = max(1, max(last, typical ?? 0) * 1.15)
+        let scale = typical.map { max(1, max(last, $0) * 1.15) } ?? max(1, peak)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Circle().fill(color).frame(width: 8, height: 8).accessibilityHidden(true)
