@@ -36,6 +36,9 @@ struct StrandiOSApp: App {
     /// activity is suppressed rather than stacked beside it. Built in `init`, where the strap log it
     /// writes to exists.
     @State private var liftActivity: LiftLiveActivityController
+    /// The running-workout banner (time, heart rate, strain), which the live heart rate banner also makes
+    /// room for. Follows `AppModel.activeWorkout` from process start.
+    @State private var workoutActivity: WorkoutLiveActivityController
     /// The live gym session. Owned HERE, at the app root, rather than by the screen that shows it:
     /// swiping the workout sheet away must not stop the clock, silence the strap or drop the
     /// double-tap handler. See `LiftSessionController`.
@@ -124,8 +127,13 @@ struct StrandiOSApp: App {
         _liftActivity = State(initialValue: liftActivity)
         // The live heart rate banner makes room only for the Lift Log banner actually on screen, which carries the
         // heart rate itself — not for a sync (`LiveHRBannerLifecycle`).
+        let workoutActivity = WorkoutLiveActivityController()
+        workoutActivity.follow(model)
+        _workoutActivity = State(initialValue: workoutActivity)
         let liveActivity = LiveActivityController()
-        liveActivity.follow(model, standsAside: { [weak liftActivity] in liftActivity?.isShowing == true })
+        liveActivity.follow(model, standsAside: { [weak liftActivity, weak workoutActivity] in
+            liftActivity?.isShowing == true || workoutActivity?.isShowing == true
+        })
         _liveActivity = State(initialValue: liveActivity)
         ShowLiveHRIntent.handler = { [weak liveActivity] in liveActivity?.startFromShortcut() ?? .refused }
         // A gym session keeps ONE banner on the Lock Screen, its own — as the live-HR banner already
@@ -366,6 +374,8 @@ struct StrandiOSApp: App {
                 // the background comes back now, whether or not the strap is sending anything.
                 pushLiftActivity()
                 // Only the foreground may start the live heart rate banner: offer it now.
+                // The workout banner first, so the heart rate banner sees it and stands aside.
+                workoutActivity.appBecameActive()
                 liveActivity.appBecameActive()
                 // End a "Connecting…" sync island whose sync never came, rather than leave it greyed.
                 SyncLiveActivityController.shared.reconcile(live: model.live)
