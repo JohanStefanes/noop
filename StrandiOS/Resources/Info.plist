@@ -89,6 +89,7 @@
 		<string>location</string>
 		<string>fetch</string>
 		<string>processing</string>
+		<string>workout-processing</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>

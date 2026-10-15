@@ -1270,8 +1270,13 @@ final class HealthKitBridge: ObservableObject {
                                                          limit: Self.workoutReadLimit)
         let mine = mineRead ?? []
         let computed = computedRead ?? []
+        // A workout the NOOP watch app started is already in Health as the watch's own HKWorkout, so its
+        // mirrored phone row is left out. Being absent from `rows` also lets the orphan pass below remove
+        // a copy an earlier write-back made.
+        let watchStarted = WatchMirroredWorkouts.startTimes()
         var byKey: [String: WorkoutRow] = [:]
         for w in computed + mine where w.source != HealthKitBridge.appleWorkoutSource {
+            if w.source == "manual" && watchStarted.contains(w.startTs) { continue }
             byKey["\(w.startTs):\(w.sport)"] = w
         }
         let rows = byKey.values.sorted { $0.startTs < $1.startTs }
@@ -1850,7 +1855,7 @@ final class HealthKitBridge: ObservableObject {
     /// Map an `HKWorkoutActivityType` to NOOP's human sport label. Strength training routes to the
     /// shared lifting sport so a gym session lands in the Lifting lane; anything we don't name explicitly
     /// falls back to a generic "Workout" rather than an opaque numeric type.
-    private static func sportName(_ type: HKWorkoutActivityType) -> String {
+    static func sportName(_ type: HKWorkoutActivityType) -> String {
         switch type {
         case .running:                    return "Running"
         case .walking:                    return "Walking"

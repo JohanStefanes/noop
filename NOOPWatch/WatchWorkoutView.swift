@@ -428,6 +428,11 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
                 // Collection started (or failed silently); the delegate callbacks drive the UI from here.
                 DispatchQueue.main.async { self?.phase = .active }
             }
+            // Mirror the session to the paired iPhone so NOOP there learns about the workout the moment it
+            // starts, rather than from the saved HKWorkout after it ends. HealthKit launches the phone app
+            // in the background if it is not running. Best effort: an unreachable or absent phone leaves
+            // the wrist workout recording exactly as before.
+            session.startMirroringToCompanionDevice { _, _ in }
             StrandHaptic.commit.play()  // a firm tap confirms the session is live without looking
         } catch {
             // Could not create the session (rare). Fall back to idle so Start can be tried again.
@@ -475,6 +480,17 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
         // was otherwise only ever advanced by sample callbacks — so a sparse-sample session showed a
         // too-short recap. finishWorkout's authoritative HKWorkout.duration overrides it just below. (@bhelm)
         elapsed = builder.elapsedTime
+        finish(session: session, builder: builder, at: stop)
+        #else
+        phase = .saved
+        #endif
+    }
+
+    #if canImport(HealthKit) && os(watchOS)
+    /// Finalize collection, save the workout, then end the session. Shared by the wrist End button and an
+    /// End sent from the mirrored iPhone session. `session.end()` comes last so the phone's mirror sees
+    /// `.ended` only once the workout is banked.
+    private func finish(session: HKWorkoutSession, builder: HKLiveWorkoutBuilder, at stop: Date) {
         builder.endCollection(withEnd: stop) { [weak self] _, _ in
             builder.finishWorkout { [weak self] hkWorkout, _ in
                 DispatchQueue.main.async {
@@ -483,13 +499,29 @@ final class WatchWorkoutSession: NSObject, ObservableObject {
                     self?.phase = .saved
                     self?.session = nil
                     self?.builder = nil
+                    session.end()
                 }
             }
         }
-        #else
-        phase = .saved
-        #endif
     }
+
+    /// The phone ended the mirrored session. Only acts while recording: a wrist End has already moved
+    /// `phase` to `.ending`, so its own `.stopped` transition does not finish the workout twice.
+    private func finishFromRemoteStop(at date: Date) {
+        guard let session, let builder, phase == .active || phase == .paused else { return }
+        phase = .ending
+        elapsed = builder.elapsedTime
+        finish(session: session, builder: builder, at: date)
+    }
+
+    /// Send the latest wrist heart rate to the mirrored iPhone session, where it stands in for the strap
+    /// when the strap is not streaming. Fire and forget: a dropped packet is replaced by the next sample.
+    private func sendToPhone(bpm: Int) {
+        guard let session,
+              let data = try? JSONEncoder().encode(WatchMirrorPayload(bpm: bpm)) else { return }
+        session.sendToRemoteWorkoutSession(data: data) { _, _ in }
+    }
+    #endif
 
     /// Clear the recap and return to idle so another workout can be started.
     func reset() {
@@ -518,6 +550,9 @@ extension WatchWorkoutSession: HKWorkoutSessionDelegate {
             case .paused:
                 self.phase = .paused
                 StrandHaptic.light.play()  // soft tap marks the pause landing
+            case .stopped, .ended:
+                // Reached while still recording only when the iPhone ended the mirrored session.
+                self.finishFromRemoteStop(at: date)
             default:
                 break
             }
@@ -571,7 +606,10 @@ extension WatchWorkoutSession: HKLiveWorkoutBuilderDelegate {
         let elapsedNow = workoutBuilder.elapsedTime
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let newBpm { self.bpm = newBpm }
+            if let newBpm {
+                self.bpm = newBpm
+                self.sendToPhone(bpm: newBpm)
+            }
             if let newAvg { self.avgBpm = newAvg }
             if let newKcal { self.activeKcal = newKcal }
             self.elapsed = elapsedNow

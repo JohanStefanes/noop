@@ -21,6 +21,10 @@ struct StrandiOSApp: App {
     /// The phone→watch link. Built + activated here so the watch app actually receives snapshots on a
     /// real device; without an owner that pushes it, the watch only ever shows placeholder data.
     @StateObject private var watch = WatchSessionBridge()
+    /// The watch→phone direction for workouts: receives a session the NOOP watch app mirrors here. Built
+    /// and armed in `init` because HealthKit delivers a background-launched session to the handler that
+    /// is set before launch finishes.
+    @State private var watchWorkoutMirror: WatchWorkoutMirror
     /// Shared cross-screen navigation hook (e.g. Live → Devices). The iOS shell (`RootTabView`)
     /// observes it and presents the Devices manager.
     @StateObject private var router: NavRouter
@@ -158,6 +162,9 @@ struct StrandiOSApp: App {
             noopDeviceId: model.deviceId
         )
         _health = StateObject(wrappedValue: bridge)
+        let mirror = WatchWorkoutMirror(model: model)
+        mirror.arm()
+        _watchWorkoutMirror = State(initialValue: mirror)
         // Register a separate, always-on-while-authorized refresh task for Apple Health write-back.
         // The operation is write-only and bounded to the bridge's recent window; fresh BLE offloads still
         // use the immediate hook below. BGTaskScheduler chooses the actual wake time.

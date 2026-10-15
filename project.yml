@@ -288,6 +288,10 @@ targets:
           # reporter's install, which no bluetooth-central wake survives; a processing task is the long,
           # deferrable kind that can finish it.
           - processing
+          # A workout started in the NOOP watch app mirrors its HKWorkoutSession to the phone, and
+          # HealthKit launches NOOP in the background to receive it (WatchWorkoutMirror). That launch,
+          # and the mirrored session running while the phone is locked, need this mode.
+          - workout-processing
         # Permit every background-task identifier. Each derives from Bundle.main at runtime so it
         # tracks BUNDLE_ID_PREFIX, and each is registered from StrandiOSApp.init before launch finishes.
         BGTaskSchedulerPermittedIdentifiers:
@@ -454,6 +458,10 @@ targets:
         WKCompanionAppBundleIdentifier: $(BUNDLE_ID_PREFIX).noop
         NSHealthShareUsageDescription: "NOOP reads your heart rate from the Watch sensor to show a live readout on your wrist. It stays on your device."
         NSHealthUpdateUsageDescription: "NOOP records a basic workout session on your Watch for a higher-fidelity heart rate. The session stays on your device."
+        # Keeps the HKWorkoutSession recording when the wrist drops or the screen sleeps, which the
+        # session mirrored to the iPhone depends on.
+        WKBackgroundModes:
+          - workout-processing
     entitlements:
       path: NOOPWatch/NOOPWatch.entitlements
       properties:

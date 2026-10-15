@@ -96,6 +96,16 @@ final class AppModel: ObservableObject {
     @Published var activeWorkout: ActiveWorkout?
     /// The just-ended workout, for a brief inline confirmation on Live (cleared on the next start).
     @Published var lastWorkout: WorkoutRow?
+    /// Latest wrist heart rate sent by a workout mirrored from the NOOP watch app, nil otherwise. Stands in
+    /// for the strap's `bpm` (on screen and in the recorded window) only while the strap is not streaming.
+    @Published private(set) var watchWorkoutBpm: Int?
+
+    /// A control the phone sends back to the watch session that started the active workout.
+    enum WatchWorkoutControl { case pause, resume, end }
+    /// Set by the iOS `WatchWorkoutMirror`. Called when the wearer pauses, resumes, ends or discards a
+    /// watch-started workout on the phone, so the wrist session follows. Never called for a phone-started
+    /// workout, and never for a change that itself arrived from the watch.
+    var onWatchWorkoutControl: ((WatchWorkoutControl) -> Void)?
 
     /// Records the GPS route of an in-flight distance-type workout (run / ride / walk / hike) from
     /// CoreLocation (#524) , the Apple analogue of Android's `GpsSession` + foreground `LocationManager`.
@@ -124,6 +134,9 @@ final class AppModel: ObservableObject {
         var peakHr: Int = 0
         var pausedAt: Date?
         var pausedDuration: TimeInterval = 0
+        /// True when the NOOP watch app started this workout and mirrored it here. Not persisted: a
+        /// workout rehydrated after an OS kill continues as a plain phone workout.
+        var fromWatch = false
 
         var isPaused: Bool { pausedAt != nil }
 
@@ -823,13 +836,21 @@ final class AppModel: ObservableObject {
     /// name; callers that don't pick a sport get the catalogue default "Other", parity with Android's
     /// `startWorkout(sport:)`). The active card on Live then shows elapsed time, live HR and strain
     /// building; End scores + saves it under this sport. Confirms with a single buzz. (#519)
-    func startWorkout(sport: String = WorkoutCatalog.defaultSportName) {
+    ///
+    /// `start` and `fromWatch` are set only by the iOS watch mirror, which begins the phone workout at the
+    /// watch session's own start time so both devices time the same window.
+    func startWorkout(sport: String = WorkoutCatalog.defaultSportName,
+                      start: Date = Date(), fromWatch: Bool = false) {
         guard activeWorkout == nil else { return }
         lastWorkout = nil
+        watchWorkoutBpm = nil
         let name = sport.trimmingCharacters(in: .whitespaces)
         let resolved = name.isEmpty ? WorkoutCatalog.defaultSportName : name
-        let started = Date()
-        activeWorkout = ActiveWorkout(start: started, sport: resolved)
+        let started = start
+        activeWorkout = ActiveWorkout(start: started, sport: resolved, fromWatch: fromWatch)
+        // The watch saves its own HKWorkout for this session, so Apple Health write-back must skip the
+        // phone's row or Health would hold the workout twice.
+        if fromWatch { WatchMirroredWorkouts.record(startTs: Int(started.timeIntervalSince1970)) }
         // #524: arm GPS route recording for a distance-type sport (run / ride / walk / hike), mirroring
         // Android, which defaults GPS on for `isDistanceSport`. Manual-first / opt-in: only these sports
         // record a route, and the recorder still captures nothing unless the user grants When-In-Use
@@ -935,7 +956,14 @@ final class AppModel: ObservableObject {
     }
 
     func toggleWorkoutPause() {
-        guard var w = activeWorkout else { return }
+        guard let w = activeWorkout else { return }
+        setWorkoutPaused(!w.isPaused, fromWatch: false)
+    }
+
+    /// Pause or resume the active workout. `fromWatch` marks a change that arrived from the mirrored watch
+    /// session, which must not be sent back to it. A request matching the current state is a no-op.
+    func setWorkoutPaused(_ paused: Bool, fromWatch: Bool) {
+        guard var w = activeWorkout, w.isPaused != paused else { return }
         if let pausedAt = w.pausedAt {
             w.pausedDuration += Date().timeIntervalSince(pausedAt)
             w.pausedAt = nil
@@ -946,12 +974,16 @@ final class AppModel: ObservableObject {
         }
         activeWorkout = w
         persistActiveWorkout()
+        if w.fromWatch && !fromWatch { onWatchWorkoutControl?(paused ? .pause : .resume) }
     }
 
-    /// Abort the active session without saving a workout.
+    /// Abort the active session without saving a workout. A watch-started workout is ended on the wrist
+    /// too; the watch still saves its own copy there.
     func discardWorkout() {
-        guard activeWorkout != nil else { return }
+        guard let w = activeWorkout else { return }
         activeWorkout = nil
+        watchWorkoutBpm = nil
+        if w.fromWatch { onWatchWorkoutControl?(.end) }
         if activeWorkoutIsGps { gpsRecorder.stop() }
         activeWorkoutIsGps = false
         ActiveWorkoutPersistence.clear()
@@ -973,9 +1005,13 @@ final class AppModel: ObservableObject {
         elapsedSeconds < minimumWorkoutSeconds
     }
 
-    func endWorkout() {
+    /// End the active workout. `fromWatch` marks an end that arrived from the mirrored watch session;
+    /// any other end of a watch-started workout is sent to the wrist.
+    func endWorkout(fromWatch: Bool = false) {
         guard let w = activeWorkout else { return }
         activeWorkout = nil
+        watchWorkoutBpm = nil
+        if w.fromWatch && !fromWatch { onWatchWorkoutControl?(.end) }
         let wasGps = activeWorkoutIsGps
         activeWorkoutIsGps = false
         // Drop the durable snapshot the instant the session ends , whether it saves below or is discarded
@@ -1082,8 +1118,10 @@ final class AppModel: ObservableObject {
     /// Append the current smoothed `bpm` to the active workout and recompute its running strain. Called
     /// from `ingestHR` on every fresh sample; a no-op when no workout is running. Recomputing strain
     /// over the growing window each sample is cheap at the ~1 Hz live-HR cadence.
-    private func captureWorkoutSample() {
-        guard var w = activeWorkout, !w.isPaused, let hr = bpm else { return }
+    ///
+    /// `hr` overrides the strap's `bpm`, for a wrist reading from a mirrored watch workout.
+    private func captureWorkoutSample(hr override: Int? = nil) {
+        guard var w = activeWorkout, !w.isPaused, let hr = override ?? bpm else { return }
         // A second that already has its sample moves only the peak: publish that, and skip the rescore and the
         // snapshot (the next second's sample carries the peak into the snapshot).
         let peakBefore = w.peakHr
@@ -1098,6 +1136,15 @@ final class AppModel: ObservableObject {
         activeWorkout = w
         // Re-snapshot the durable session so a kill keeps the latest accumulated HR window (#529).
         persistActiveWorkout()
+    }
+
+    /// A heart-rate reading from the watch session that started the active workout. It is shown and
+    /// recorded only while the strap is not streaming: with the strap live, its 1 Hz `bpm` stays the
+    /// workout's one source, so the window never mixes two sensors in the same seconds.
+    func ingestWatchWorkoutHeartRate(_ hr: Int) {
+        guard activeWorkout?.fromWatch == true else { return }
+        watchWorkoutBpm = hr
+        if bpm == nil { captureWorkoutSample(hr: hr) }
     }
 
     /// Drop the smoothing window and blank the hero number so a resume / re-attach shows ","

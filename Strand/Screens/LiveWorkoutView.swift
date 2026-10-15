@@ -40,7 +40,12 @@ struct LiveWorkoutView: View {
     @State private var showDeleteConfirm = false
 
     private var zoneSet: HRZoneSet { model.profile.hrZoneSet }
-    private var zone: Int { model.bpm.map { zoneSet.zoneNumber(forBPM: Double($0)) } ?? 0 }
+    /// The heart rate this screen shows: the strap's, or the wrist reading of a watch-started workout
+    /// while the strap is not streaming. The same fallback `ingestWatchWorkoutHeartRate` records, so the
+    /// hero and the saved window agree on which sensor a second came from.
+    private var heroBpm: Int? { model.bpm ?? model.watchWorkoutBpm }
+    private var heroBpmIsWatch: Bool { model.bpm == nil && model.watchWorkoutBpm != nil }
+    private var zone: Int { heroBpm.map { zoneSet.zoneNumber(forBPM: Double($0)) } ?? 0 }
 
     var body: some View {
         ScrollView {
@@ -147,9 +152,18 @@ struct LiveWorkoutView: View {
             .background(NoopPanelSurface(tint: StrandPalette.metricRose, cornerRadius: 14))
             .clipShape(Capsule())
             Spacer(minLength: 0)
+            // A workout the NOOP watch app started and mirrored here: pausing or ending it on either
+            // device does the same on the other.
+            if model.activeWorkout?.fromWatch == true {
+                Label("Started on Apple Watch", systemImage: "applewatch")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Recording workout"))
+        .accessibilityLabel(model.activeWorkout?.fromWatch == true
+                            ? Text("Recording workout, started on Apple Watch")
+                            : Text("Recording workout"))
     }
 
     /// Centered elapsed-time stack — same TimelineView source as before; card chrome removed so
@@ -180,7 +194,7 @@ struct LiveWorkoutView: View {
             Text("HEART RATE")
                 .font(StrandFont.overline).tracking(StrandFont.overlineTracking)
                 .foregroundStyle(StrandPalette.textSecondary)
-            if let bpm = model.bpm {
+            if let bpm = heroBpm {
                 CountUpText(value: Double(bpm),
                             format: { "\(Int($0.rounded()))" },
                             font: StrandFont.rounded(72, weight: .semibold),
@@ -190,7 +204,7 @@ struct LiveWorkoutView: View {
                     .font(StrandFont.rounded(72, weight: .semibold))
                     .foregroundStyle(tint)
             }
-            Text("bpm")
+            (heroBpmIsWatch ? Text("bpm · Apple Watch") : Text("bpm"))
                 .font(StrandFont.subhead)
                 .foregroundStyle(StrandPalette.textSecondary)
         }
