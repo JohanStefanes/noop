@@ -60,6 +60,22 @@ enum JohanTheme {
     static let strainBlue = Color(hex: "#64D2FF")
     static let sleepViolet = Color(hex: "#A294FF")
 
+    /// Sleep stages, one clearly separate hue each (wake green, REM orange, light periwinkle, deep blue), so
+    /// the hypnogram, the stage rows and the phase list read with one key. Each clears 4.5:1 on black.
+    static let stageAwake = Color(hex: "#5EDB7A")
+    static let stageREM = Color(hex: "#FF8A5C")
+    static let stageLight = Color(hex: "#9EA8FF")
+    static let stageDeep = Color(hex: "#4F7BFF")
+
+    static func stageColor(_ stage: SleepStage) -> Color {
+        switch stage {
+        case .awake: return stageAwake
+        case .rem: return stageREM
+        case .light: return stageLight
+        case .deep: return stageDeep
+        }
+    }
+
     static let textPrimary = Color.white
     /// The system secondary label (#EBEBF5 at 60 %): 9.6:1 on black.
     static let textSecondary = inkAlpha(0.60, highContrast: 0.80)
