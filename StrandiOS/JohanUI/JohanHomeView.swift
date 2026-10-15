@@ -9,6 +9,7 @@ import WhoopProtocol
 /// beside the strain target, and vitals against the personal baseline.
 struct JohanHomeView: View {
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var profile: ProfileStore
     @StateObject private var model = JohanHomeModel()
@@ -73,14 +74,22 @@ struct JohanHomeView: View {
                                     })
             }
         }
-        .task(id: model.dayOffset) { await model.load(repo: repo, profile: profile) }
+        .task(id: HomeLoadKey(dayOffset: model.dayOffset, reload: reloadTick)) {
+            await model.load(repo: repo, profile: profile)
+        }
         .onReceive(repo.$days.dropFirst()) { _ in
             Task {
                 await model.load(repo: repo, profile: profile)
                 await model.loadRings(repo: repo)
             }
         }
-        .task { await model.loadRings(repo: repo) }
+        .task(id: reloadTick) { await model.loadRings(repo: repo) }
+    }
+
+    /// Reloads the day when it changes or when `JohanRootView` asks every screen to reload.
+    private struct HomeLoadKey: Equatable {
+        let dayOffset: Int
+        let reload: Int
     }
 
     private static let whole: (Double) -> String = { "\(Int($0.rounded()))" }

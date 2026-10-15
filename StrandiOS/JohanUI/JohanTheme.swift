@@ -28,11 +28,33 @@ private struct JohanSelectTabKey: EnvironmentKey {
     static let defaultValue: (JohanTab) -> Void = { _ in }
 }
 
+private struct JohanReloadTickKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+private struct JohanRequestReloadKey: EnvironmentKey {
+    static let defaultValue: () -> Void = { }
+}
+
 extension EnvironmentValues {
     /// Switches the JohanUI tab bar, so content (a ring on Home) can jump to the tab that owns it.
     var johanSelectTab: (JohanTab) -> Void {
         get { self[JohanSelectTabKey.self] }
         set { self[JohanSelectTabKey.self] = newValue }
+    }
+
+    /// Bumped by `JohanRootView` when the app returns to the foreground, the calendar day rolls over, or a
+    /// pull to refresh finishes. Screens key their load `.task` on it: `repo.$days` only publishes when the
+    /// stored rows change, so without it "today" and the live figures stay as they were at the last change.
+    var johanReloadTick: Int {
+        get { self[JohanReloadTickKey.self] }
+        set { self[JohanReloadTickKey.self] = newValue }
+    }
+
+    /// Asks `JohanRootView` to bump `johanReloadTick`.
+    var johanRequestReload: () -> Void {
+        get { self[JohanRequestReloadKey.self] }
+        set { self[JohanRequestReloadKey.self] = newValue }
     }
 
     /// True while the original `RootTabView` is hosted from inside the JohanUI "Mehr" tab, so that it
@@ -233,6 +255,7 @@ struct JohanScreen<Content: View>: View {
     var showsNavigationBar = true
     @ViewBuilder var content: () -> Content
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanRequestReload) private var requestReload
 
     var body: some View {
         ScrollView {
@@ -244,8 +267,11 @@ struct JohanScreen<Content: View>: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        // Pull to refresh re-reads the store; each screen reloads from `repo.$days` like after any refresh.
-        .refreshable { await repo.refresh() }
+        // Pull to refresh re-reads the store, then reloads every screen even when no stored row changed.
+        .refreshable {
+            await repo.refresh()
+            requestReload()
+        }
         .background(JohanTheme.background.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(showsNavigationBar ? .large : .inline)

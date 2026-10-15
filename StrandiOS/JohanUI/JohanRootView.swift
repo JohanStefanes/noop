@@ -28,6 +28,8 @@ struct JohanRootView: View {
     /// When the app last went to the background, so a real return replays the intro and an app-switcher
     /// flick does not.
     @State private var backgroundedAt: Date?
+    /// See `johanReloadTick`.
+    @State private var reloadTick = 0
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -46,6 +48,8 @@ struct JohanRootView: View {
         }
         .environment(\.johanSelectTab) { tab in selectedTab = tab.rawValue }
         .environment(\.johanIntroPhase, introPhase)
+        .environment(\.johanReloadTick, reloadTick)
+        .environment(\.johanRequestReload) { reloadTick &+= 1 }
         .environment(\.johanIntroTarget) { target in
             if introPhase != .done && introTarget != target { introTarget = target }
         }
@@ -62,9 +66,15 @@ struct JohanRootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background: backgroundedAt = Date()
-            case .active: replayIntroAfterReturn()
+            case .active:
+                if backgroundedAt != nil { reloadAfterReturn() }
+                replayIntroAfterReturn()
             default: break
             }
+        }
+        // Midnight (or a clock / time-zone change) moves "today" without any stored row changing.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            reloadTick &+= 1
         }
         // White, not an accent: green is reserved for "well recovered" in the content below.
         .tint(JohanTheme.textPrimary)
@@ -87,6 +97,15 @@ struct JohanRootView: View {
                 return
             }
             routed = dest
+        }
+    }
+
+    /// Back from the background: re-read the store and reload every screen, even when no row changed.
+    private func reloadAfterReturn() {
+        reloadTick &+= 1
+        Task {
+            await repo.refresh()
+            reloadTick &+= 1
         }
     }
 

@@ -106,6 +106,7 @@ final class JohanWatchCompareModel: ObservableObject {
 /// far its heart rate and HRV sit from the Apple Watch worn the same night.
 struct JohanWatchCompareView: View {
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanReloadTick) private var reloadTick
     @StateObject private var model = JohanWatchCompareModel()
 
     var body: some View {
@@ -121,7 +122,7 @@ struct JohanWatchCompareView: View {
                     .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
             }
         }
-        .task { await model.load(repo: repo) }
+        .task(id: reloadTick) { await model.load(repo: repo) }
         .onReceive(repo.$days.dropFirst()) { _ in Task { await model.load(repo: repo) } }
     }
 

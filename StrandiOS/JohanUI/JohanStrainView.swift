@@ -7,6 +7,7 @@ import StrandAnalytics
 /// the latest workouts. Today's value comes from `JohanHomeModel` (the same live pass the Home dial uses).
 struct JohanStrainView: View {
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var profile: ProfileStore
     @EnvironmentObject private var intelligence: IntelligenceEngine
     @StateObject private var today = JohanHomeModel()
@@ -61,7 +62,7 @@ struct JohanStrainView: View {
                 }
             }
         }
-        .task { await reload() }
+        .task(id: reloadTick) { await reload() }
         .onReceive(repo.$days.dropFirst()) { _ in Task { await reload() } }
     }
 

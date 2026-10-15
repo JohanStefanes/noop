@@ -10,6 +10,7 @@ import WhoopStore
 /// consistency, sleep debt). Every card names what it shows in a title and one plain sentence.
 struct JohanSleepCoachView: View {
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var model: AppModel
     @StateObject private var coach = JohanSleepCoachModel()
     @State private var showsPhases = false
@@ -38,7 +39,7 @@ struct JohanSleepCoachView: View {
                 JohanPlaceholderCard(height: 180)
             }
         }
-        .task { await coach.load(repo: repo, circadian: model.circadianPhase) }
+        .task(id: reloadTick) { await coach.load(repo: repo, circadian: model.circadianPhase) }
         .onReceive(repo.$days.dropFirst()) { _ in
             Task { await coach.load(repo: repo, circadian: model.circadianPhase) }
         }

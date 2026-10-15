@@ -66,8 +66,9 @@ enum JohanIntro {
     /// A cold launch plays it, switching JohanUI off and on again does not.
     @MainActor static var played = false
 
-    /// Seconds in the background after which opening the app plays the intro again.
-    static let replayAfterBackground: TimeInterval = 10
+    /// Seconds in the background after which opening the app plays the intro again. Long enough that a
+    /// quick look at another app returns straight to the numbers.
+    static let replayAfterBackground: TimeInterval = 15 * 60
 
     /// DEBUG `--no-intro` skips it (deterministic simulator screenshots).
     static var suppressed: Bool {

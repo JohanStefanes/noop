@@ -13,6 +13,7 @@ struct JohanWorkoutView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var repo: Repository
+    @Environment(\.johanReloadTick) private var reloadTick
     @StateObject private var history = JohanStrainModel()
     /// The sport last started here, offered first next time.
     @AppStorage("johanWorkoutSport") private var selectedSport = "Tennis"
@@ -60,7 +61,7 @@ struct JohanWorkoutView: View {
         } message: {
             Text("This stops recording and saves what's captured so far. It can't be resumed.")
         }
-        .task { await history.load(repo: repo) }
+        .task(id: reloadTick) { await history.load(repo: repo) }
         .onReceive(repo.$days.dropFirst()) { _ in Task { await history.load(repo: repo) } }
     }
 
