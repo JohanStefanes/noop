@@ -227,4 +227,44 @@ final class AlarmReadbackDecodeTests: XCTestCase {
         XCTAssertTrue(live.log.contains { $0.contains("SET_ALARM_TIME") && $0.contains("result=0x03") },
                       "SET_ALARM_TIME response must log the raw result byte: \(live.log)")
     }
+
+    // MARK: WHOOP 5/MG slot-1 record (GET_ALARM_TIME [4, 1])
+
+    /// A 5/MG COMMAND_RESPONSE: 8 bytes of outer header, then `[type][seq][cmd][origin_seq][result]`, the
+    /// payload and a crc32 trailer, with `len` marking where the trailer starts (inner offset 8).
+    private func whoop5ResponseFrame(payload: [UInt8]) -> [UInt8] {
+        let header: [UInt8] = [0xAA, 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05]
+        var frame = header + [36, 0x29, 67, 0x42, 1] + payload
+        let length = UInt16(frame.count)
+        frame[1] = UInt8(length & 0xFF)
+        frame[2] = UInt8(length >> 8)
+        return frame + [0xDE, 0xAD, 0xBE, 0xEF]
+    }
+
+    /// The 21-byte slot-1 record decodes its LE epoch at offset 2 (the #535 capture epoch).
+    func testWhoop5Slot1Record_decodesEpoch() {
+        let record: [UInt8] = [0x04, 0x01, 0x30, 0xD5, 0x35, 0x6A, 0, 0] + [47, 152, 0, 0, 0, 0, 0, 0] + [0, 0, 7, 30, 0]
+        XCTAssertEqual(FrameRouter.whoop5AlarmSlot1Epoch(in: whoop5ResponseFrame(payload: record)), 1_781_912_880)
+    }
+
+    /// All zeros decodes to 0, which the router reports as "empty or failed read", never as an alarm.
+    func testWhoop5Slot1Record_allZeroEpoch() {
+        let record: [UInt8] = [0x04, 0x01] + Array(repeating: 0, count: 19)
+        XCTAssertEqual(FrameRouter.whoop5AlarmSlot1Epoch(in: whoop5ResponseFrame(payload: record)), 0)
+    }
+
+    /// Another slot, a short body, or a failure body is not a slot-1 record.
+    func testWhoop5OtherShapes_doNotDecode() {
+        XCTAssertNil(FrameRouter.whoop5AlarmSlot1Epoch(in: whoop5ResponseFrame(payload: [0x04, 0x02, 0x30, 0xD5, 0x35, 0x6A])))
+        XCTAssertNil(FrameRouter.whoop5AlarmSlot1Epoch(in: whoop5ResponseFrame(payload: [0x04, 0x01, 0x30])))
+        XCTAssertNil(FrameRouter.whoop5AlarmSlot1Epoch(in: whoop5ResponseFrame(payload: [0x04, 10])))
+    }
+
+    /// The alarm screen's line: only a readback taken after the arm counts, and an empty answer is never "ok".
+    func testWhoop5ReadbackText() {
+        XCTAssertNil(SmartAlarmView.whoop5ReadbackText(sent: 1_781_912_880, armAt: 200, reported: 1_781_912_880, reportedAt: 100))
+        XCTAssertEqual(SmartAlarmView.whoop5ReadbackText(sent: 1_781_912_880, armAt: 100, reported: 1_781_912_880, reportedAt: 200)?.ok, true)
+        XCTAssertEqual(SmartAlarmView.whoop5ReadbackText(sent: 1_781_912_880, armAt: 100, reported: 0, reportedAt: 200)?.ok, false)
+        XCTAssertEqual(SmartAlarmView.whoop5ReadbackText(sent: 1_781_912_880, armAt: 100, reported: 1_781_999_999, reportedAt: 200)?.ok, false)
+    }
 }

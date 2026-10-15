@@ -39,6 +39,12 @@ struct SmartAlarmView: View {
     // FrameRouter). ≥2 = the strap is persistently refusing the alarm (a corrupted clock/alarm register),
     // which the strapRejectedCard surfaces with reset guidance. @AppStorage so it updates live.
     @AppStorage("alarm.rejectStreak") private var alarmRejectStreak = 0
+    /// The last arm and the strap's last readback (written by BLEManager / FrameRouter), for the 5/MG
+    /// readback line. Doubles with -1 for "never", since AppStorage has no optional numbers.
+    @AppStorage("alarm.lastArmSentEpoch") private var alarmLastArmSent = -1
+    @AppStorage("alarm.lastArmAt") private var alarmLastArmAt = -1.0
+    @AppStorage("alarm.lastReportedEpoch") private var alarmLastReported = -1
+    @AppStorage("alarm.lastReportedAt") private var alarmLastReportedAt = -1.0
     /// Calendar weekday numbers laid out Monday-first (Mon…Sun → 2,3,4,5,6,7,1), matching AutomationsView.
     private static let weekdayOrder = [2, 3, 4, 5, 6, 7, 1]
 
@@ -291,6 +297,22 @@ struct SmartAlarmView: View {
                             .font(StrandFont.footnote)
                             .foregroundStyle(StrandPalette.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        // What the strap itself reports holding in slot 1, read back after each arm (and on
+                        // request). Labelled as the strap's report: an all-zero answer is either an empty slot
+                        // or a failed read, which a 5/MG answers identically, so it is never called "cleared".
+                        if let status = Self.whoop5ReadbackText(sent: alarmLastArmSent, armAt: alarmLastArmAt,
+                                                                reported: alarmLastReported, reportedAt: alarmLastReportedAt) {
+                            Text(status.text)
+                                .font(StrandFont.footnote)
+                                .foregroundStyle(status.ok ? StrandPalette.statusPositive : StrandPalette.statusWarning)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Button {
+                            model.ble.getStrapAlarm()
+                        } label: {
+                            Text("Check what the strap has stored")
+                        }
+                        .buttonStyle(NoopButtonStyle(.secondary, fullWidth: true))
                     } else {
                         Text("Armed on the strap itself, so it can buzz at your wake time even if your phone is asleep or NOOP is closed. Sends the exact alarm command the official app sends, confirmed buzzing on a real WHOOP 4.0 (community wire capture + on-device test, #535). Keep a backup alarm for anything you truly can't miss.")
                             .font(StrandFont.footnote)
@@ -324,6 +346,21 @@ struct SmartAlarmView: View {
             .onChangeCompat(of: behavior.smartAlarmMinutes) { _ in model.applySmartAlarm() }
             .onChangeCompat(of: behavior.smartAlarmWeekdays) { _ in model.applySmartAlarm() }
         }
+    }
+
+    /// The 5/MG readback line: nil until the strap has answered a readback taken after the last arm.
+    /// `ok` when the strap reports the very epoch that was sent. Pure so it can be tested on its own.
+    static func whoop5ReadbackText(sent: Int, armAt: Double, reported: Int, reportedAt: Double) -> (text: String, ok: Bool)? {
+        guard sent > 0, armAt > 0, reportedAt >= armAt, reported >= 0 else { return nil }
+        if reported == sent {
+            let time = Date(timeIntervalSince1970: TimeInterval(reported)).formatted(date: .abbreviated, time: .shortened)
+            return (String(localized: "The strap reports this alarm stored: \(time)."), true)
+        }
+        if reported == 0 {
+            return (String(localized: "The strap's readback came back empty: no alarm stored, or the read failed. A 5/MG answers both the same way, so this can't tell which."), false)
+        }
+        let time = Date(timeIntervalSince1970: TimeInterval(reported)).formatted(date: .abbreviated, time: .shortened)
+        return (String(localized: "The strap reports a different alarm stored: \(time)."), false)
     }
 
     private var windDownCard: some View {

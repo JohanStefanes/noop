@@ -5478,6 +5478,11 @@ public final class BLEManager: NSObject, ObservableObject {
             log(commandChannelReady   // #613: reflect whether send() actually reached the strap, not just a non-nil uuid
                 ? "Alarm: armed 5/MG rev4 for \(localFmt.string(from: date)) — your local wake time"
                 : "Alarm: queued 5/MG rev4 for \(localFmt.string(from: date)) — strap not connected; will send on next connect")
+            // Readback: GET [4, ID] returns the stored 21-byte slot record (docs/PROTOCOL_ALARMS.md, 5/MG
+            // section), so the log and the alarm screen can show what the STRAP holds, not only what was
+            // sent. A read, behind the same Protocol probes gate as the arm; FrameRouter decodes it
+            // log-only (`handleWhoop5AlarmReadback`) and nothing depends on the answer.
+            send(.getAlarmTime, payload: [0x04, 0x01])
             return
         }
         // Clamp rather than trap: an out-of-range alarm date (pre-1970 / post-2106) must not crash.
@@ -5558,6 +5563,17 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Request the currently-armed alarm time from the strap (response arrives on cmd-notify char).
     /// Parsing the reply is optional/bonus — the raw bytes will appear in the BLE log.
     func getStrapAlarm() {
+        if selectedModel.deviceFamily == .whoop5 {
+            // 5/MG GET is [4, ID] (the slot-1 record armStrapAlarm writes), behind the same Protocol probes
+            // gate as the 5/MG arm.
+            guard PuffinExperiment.isEnabled else {
+                log("Alarm: 5/MG alarm readback needs Protocol probes (Test Centre) — not requested")
+                return
+            }
+            send(.getAlarmTime, payload: [0x04, 0x01])
+            log("Alarm: requested the 5/MG slot-1 alarm record")
+            return
+        }
         send(.getAlarmTime, payload: [0x01])
         log("Alarm: requested current alarm time")
     }
@@ -7009,10 +7025,11 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.requestConnectSync() }
                 startBackfillTimer()            // re-offload the type-47 store every backfillIntervalSeconds
                 // #34: signal settled directly (skip the cmd-notify gate `maybeSignalConnectSettled()`
-                // uses) — armStrapAlarm's 5/MG branch never sends GET_ALARM_TIME (log-only readback is
-                // WHOOP4-only, and the 5/MG alarm itself stays behind Protocol probes), so there's
-                // no reply-channel race to wait out here; this just keeps the re-arm-on-bond signal firing
-                // for 5/MG the way it did before `connectSettled` replaced raw `bonded`.
+                // uses). armStrapAlarm's 5/MG branch now follows its arm with a GET_ALARM_TIME readback
+                // (behind Protocol probes, like the arm), but that readback is log-only: a reply lost to
+                // the race is a missing log line, not a wrong decision, so there is still nothing to wait
+                // out here. This keeps the re-arm-on-bond signal firing for 5/MG the way it did before
+                // `connectSettled` replaced raw `bonded`.
                 if !connectSettledSignaled {
                     connectSettledSignaled = true
                     state.connectSettled &+= 1

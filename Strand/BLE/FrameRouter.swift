@@ -231,7 +231,9 @@ public final class FrameRouter {
                     // plausibility-gated) and an unrecognised payload still logs its raw hex - which is
                     // exactly as diagnostic. Labelled "strap reports", not "verified" (one firmware's
                     // answer format must never mislead a triage).
-                    if let epoch = Self.armedAlarmEpoch(in: frame) {
+                    if family == .whoop5 {
+                        handleWhoop5AlarmReadback(frame)
+                    } else if let epoch = Self.armedAlarmEpoch(in: frame) {
                         // #34: log the RAW response bytes alongside the decoded epoch (previously only the
                         // decode-FAILURE branch below carried them). A successful-but-mismatched decode — the
                         // strap reporting a plausible epoch that never matches what we armed, the corrupted-
@@ -239,59 +241,7 @@ public final class FrameRouter {
                         // a misdecode of a fixed response field. Log-only; the decode/behaviour is unchanged.
                         let raw = Self.commandResponsePayloadHex(in: frame) ?? "empty"
                         state.append(log: "Alarm: strap reports armed for \(Self.alarmLocalTime(epoch: epoch)) (epoch \(epoch)) [raw \(raw)]")
-                        // #34: persist what the strap reports so the debug export can show sent-vs-reported.
-                        let d = UserDefaults.standard
-                        d.set(Int(epoch), forKey: "alarm.lastReportedEpoch")
-                        // #1706: the strap this readback came from, and the bytes it came in. The raw
-                        // frame is what separates a genuinely-stored stale alarm from a misdecode of a
-                        // fixed response field, and the live log rolls long before a debug export is
-                        // taken — a 2045 readback went unexplained for exactly that reason.
-                        d.set(deviceId, forKey: "alarm.lastReportedDeviceId")
-                        d.set(raw, forKey: "alarm.lastReportedRaw")
-                        d.set(Date().timeIntervalSince1970, forKey: "alarm.lastReportedAt")
-                        // #34: count CONSECUTIVE rejections (reported ≠ what we last sent) — the signature of
-                        // a corrupted strap alarm register. A matching readback resets it, so a transient
-                        // (first read stale, then correct) never trips the warning; only a persistent refusal
-                        // climbs. SmartAlarmView surfaces the warning at ≥2; the debug export shows the count.
-                        // Observability only — never gates the BLE arm.
-                        // #1706: the streak raises a UI warning at two, so it must only COUNT a
-                        // disagreement PROVEN to be the same strap. A cross-strap reading is evidence of
-                        // nothing and leaves the streak alone — advancing would warn about a strap that
-                        // was never asked, clearing would hide a real refusal. An unattributed one is a
-                        // different case, handled below.
-                        if let sent = d.object(forKey: "alarm.lastArmSentEpoch") as? Int {
-                            let verdict = AlarmReadback.verdict(
-                                sentEpoch: sent,
-                                reportedEpoch: Int(epoch),
-                                sentDeviceId: d.string(forKey: "alarm.lastArmDeviceId"),
-                                reportedDeviceId: deviceId,   // the local, not a re-read of what we just wrote
-                                // #2322: this readback is arriving NOW, so it cannot be stale here and the
-                                // guard is a no-op on this path. Passed anyway so both call sites ask the
-                                // same question: a future caller that judges a STORED readback gets the
-                                // staleness check for free rather than rediscovering the gap.
-                                sentAt: d.object(forKey: "alarm.lastArmAt") as? Double,
-                                reportedAt: Date().timeIntervalSince1970)
-                            if AlarmReadback.countsAsRejection(verdict) {
-                                d.set(d.integer(forKey: "alarm.rejectStreak") + 1, forKey: "alarm.rejectStreak")
-                            } else if AlarmReadback.clearsRejectionStreak(verdict) {
-                                d.set(0, forKey: "alarm.rejectStreak")
-                            } else if verdict == .staleReadback {
-                                // #2322: deliberately does NOTHING to the streak, and deliberately does
-                                // NOT repeat the one-time discard below. #1706 could discard because
-                                // EVERY comparison it replaced was cross-strap and therefore invalid. A
-                                // streak standing here is not like that: most of its increments came from
-                                // readbacks that did answer their arm, so wiping it would hide a real
-                                // refusal to spare a few false ones. Leaving it untouched is the same
-                                // "no evidence either way" stance the verdict itself takes.
-                            } else if verdict == .unattributed {
-                                // Any streak standing here was built by the cross-strap comparison this
-                                // replaces, so it cannot be trusted — and since only a proven match clears
-                                // the streak now, leaving it would hold SmartAlarmView's warning up forever
-                                // on an install that upgraded mid-streak. Discard once; the next attributed
-                                // readback rebuilds it honestly.
-                                d.set(0, forKey: "alarm.rejectStreak")
-                            }
-                        }
+                        recordAlarmReadback(epoch: epoch, raw: raw)
                     } else if Self.readbackReportsNoAlarm(in: frame) {
                         // #34 (issue comment 2026-07-12): the strap's "nothing armed" sentinel — the epoch
                         // field decodes to 0. This is NOT an undocumented layout; it's the strap telling us
@@ -590,6 +540,97 @@ public final class FrameRouter {
         let inner = (family == .whoop5) ? 8 : whoop4InnerOffset
         let idx = inner + 4
         return idx < frame.count ? Int(frame[idx]) : nil
+    }
+
+    /// Persist a strap's alarm readback and judge it against the last arm (#34/#1706): what the debug
+    /// export shows as sent-vs-reported, and the rejection streak SmartAlarmView warns on. Shared by the
+    /// WHOOP 4.0 decode and the 5/MG slot-1 record, so both families are judged by one funnel.
+    private func recordAlarmReadback(epoch: UInt32, raw: String) {
+        // #34: persist what the strap reports so the debug export can show sent-vs-reported.
+        let d = UserDefaults.standard
+        d.set(Int(epoch), forKey: "alarm.lastReportedEpoch")
+        // #1706: the strap this readback came from, and the bytes it came in. The raw
+        // frame is what separates a genuinely-stored stale alarm from a misdecode of a
+        // fixed response field, and the live log rolls long before a debug export is
+        // taken — a 2045 readback went unexplained for exactly that reason.
+        d.set(deviceId, forKey: "alarm.lastReportedDeviceId")
+        d.set(raw, forKey: "alarm.lastReportedRaw")
+        d.set(Date().timeIntervalSince1970, forKey: "alarm.lastReportedAt")
+        // #34: count CONSECUTIVE rejections (reported ≠ what we last sent) — the signature of
+        // a corrupted strap alarm register. A matching readback resets it, so a transient
+        // (first read stale, then correct) never trips the warning; only a persistent refusal
+        // climbs. SmartAlarmView surfaces the warning at ≥2; the debug export shows the count.
+        // Observability only — never gates the BLE arm.
+        // #1706: the streak raises a UI warning at two, so it must only COUNT a
+        // disagreement PROVEN to be the same strap. A cross-strap reading is evidence of
+        // nothing and leaves the streak alone — advancing would warn about a strap that
+        // was never asked, clearing would hide a real refusal. An unattributed one is a
+        // different case, handled below.
+        if let sent = d.object(forKey: "alarm.lastArmSentEpoch") as? Int {
+            let verdict = AlarmReadback.verdict(
+                sentEpoch: sent,
+                reportedEpoch: Int(epoch),
+                sentDeviceId: d.string(forKey: "alarm.lastArmDeviceId"),
+                reportedDeviceId: deviceId,   // the local, not a re-read of what we just wrote
+                // #2322: this readback is arriving NOW, so it cannot be stale here and the
+                // guard is a no-op on this path. Passed anyway so both call sites ask the
+                // same question: a future caller that judges a STORED readback gets the
+                // staleness check for free rather than rediscovering the gap.
+                sentAt: d.object(forKey: "alarm.lastArmAt") as? Double,
+                reportedAt: Date().timeIntervalSince1970)
+            if AlarmReadback.countsAsRejection(verdict) {
+                d.set(d.integer(forKey: "alarm.rejectStreak") + 1, forKey: "alarm.rejectStreak")
+            } else if AlarmReadback.clearsRejectionStreak(verdict) {
+                d.set(0, forKey: "alarm.rejectStreak")
+            } else if verdict == .staleReadback {
+                // #2322: deliberately does NOTHING to the streak, and deliberately does
+                // NOT repeat the one-time discard below. #1706 could discard because
+                // EVERY comparison it replaced was cross-strap and therefore invalid. A
+                // streak standing here is not like that: most of its increments came from
+                // readbacks that did answer their arm, so wiping it would hide a real
+                // refusal to spare a few false ones. Leaving it untouched is the same
+                // "no evidence either way" stance the verdict itself takes.
+            } else if verdict == .unattributed {
+                // Any streak standing here was built by the cross-strap comparison this
+                // replaces, so it cannot be trusted — and since only a proven match clears
+                // the streak now, leaving it would hold SmartAlarmView's warning up forever
+                // on an install that upgraded mid-streak. Discard once; the next attributed
+                // readback rebuilds it honestly.
+                d.set(0, forKey: "alarm.rejectStreak")
+            }
+        }
+    }
+
+    /// The WHOOP 5/MG answer to GET_ALARM_TIME `[4, 1]`: the slot-1 record (docs/PROTOCOL_ALARMS.md, 5/MG
+    /// section). A plausible epoch is the strap reporting what it holds and goes through the same
+    /// sent-vs-reported funnel as a 4.0 readback. All zeros is NOT read as "cleared": a 5/MG GET returns
+    /// zeros after a read failure too while still reporting success, so that answer names both causes and
+    /// leaves the rejection streak alone. Log-only, as on 4.0: nothing gates the arm.
+    private func handleWhoop5AlarmReadback(_ frame: [UInt8]) {
+        let raw = Self.commandResponsePayloadHex(in: frame, family: .whoop5) ?? "empty"
+        switch Self.whoop5AlarmSlot1Epoch(in: frame) {
+        case .some(let epoch) where Self.isPlausibleAlarmEpoch(epoch):
+            state.append(log: "Alarm: 5/MG strap reports slot 1 armed for \(Self.alarmLocalTime(epoch: epoch)) (epoch \(epoch)) [raw \(raw)]")
+            recordAlarmReadback(epoch: epoch, raw: raw)
+        case .some(0):
+            state.append(log: "Alarm: 5/MG strap reports slot 1 as all zeros: either no alarm is stored or the read itself failed, which a 5/MG answers the same way [raw \(raw)]")
+            let d = UserDefaults.standard
+            d.set(0, forKey: "alarm.lastReportedEpoch")
+            d.set(deviceId, forKey: "alarm.lastReportedDeviceId")
+            d.set(raw, forKey: "alarm.lastReportedRaw")
+            d.set(Date().timeIntervalSince1970, forKey: "alarm.lastReportedAt")
+        default:
+            state.append(log: "Alarm: 5/MG strap answered the alarm readback with an unrecognised payload [raw \(raw)] - log-only")
+        }
+    }
+
+    /// The epoch of the 5/MG slot-1 alarm record in a GET_ALARM_TIME response: payload
+    /// `[revision 4][id 1][u32 LE epoch]…`. nil for any other shape (another slot, a failure body, a
+    /// payload too short to hold the epoch). Pure so AlarmReadbackDecodeTests pins it.
+    nonisolated static func whoop5AlarmSlot1Epoch(in frame: [UInt8]) -> UInt32? {
+        guard let p = commandResponsePayload(in: frame, family: .whoop5), p.count >= 6,
+              p[0] == 0x04, p[1] == 0x01 else { return nil }
+        return UInt32(p[2]) | (UInt32(p[3]) << 8) | (UInt32(p[4]) << 16) | (UInt32(p[5]) << 24)
     }
 
     // MARK: - Alarm-readback decode (WHOOP 4.0, GET_ALARM_TIME cmd 67 - #401 close-out)
