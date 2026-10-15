@@ -2,6 +2,8 @@
 import Foundation
 import SwiftUI
 import AlarmKit
+import AppIntents
+import UserNotifications
 
 /// One alarm set in JohanUI. The list itself lives here; AlarmKit holds only the scheduled copy of each
 /// enabled alarm, under the same id, because an `Alarm` read back from AlarmKit carries neither its
@@ -114,6 +116,7 @@ final class JohanAlarmStore: ObservableObject {
 
     /// Add or replace `alarm`, scheduling it when enabled.
     func save(_ alarm: JohanAlarm) async {
+        if alarm.enabled && morningSummary { Self.requestNotifications() }
         if let i = alarms.firstIndex(where: { $0.id == alarm.id }) { alarms[i] = alarm } else { alarms.append(alarm) }
         persist()
         await sync(alarm)
@@ -170,7 +173,10 @@ final class JohanAlarmStore: ObservableObject {
         }
         let presentation = AlarmPresentation(alert: alert, countdown: AlarmPresentation.Countdown(title: "Snoozing"))
         let attributes = AlarmAttributes(presentation: presentation,
-                                         metadata: JohanAlarmMetadata(label: alarm.label.isEmpty ? nil : alarm.label),
+                                         metadata: JohanAlarmMetadata(label: alarm.label.isEmpty ? nil : alarm.label,
+                                                                      alarmWord: String(localized: "Alarm"),
+                                                                      snoozingWord: String(localized: "Snoozing"),
+                                                                      pausedWord: String(localized: "Paused")),
                                          tintColor: JohanTheme.recoveryYellow)
         let time = Alarm.Schedule.Relative.Time(hour: alarm.hour, minute: alarm.minute)
         let repeats: Alarm.Schedule.Relative.Recurrence = alarm.weekdays.isEmpty
@@ -179,7 +185,70 @@ final class JohanAlarmStore: ObservableObject {
         return AlarmManager.AlarmConfiguration(
             countdownDuration: Alarm.CountdownDuration(preAlert: nil, postAlert: Self.snoozeSeconds),
             schedule: .relative(Alarm.Schedule.Relative(time: time, repeats: repeats)),
-            attributes: attributes)
+            attributes: attributes,
+            stopIntent: JohanAlarmStopIntent(alarmID: alarm.id))
+    }
+
+    // MARK: Morning summary
+
+    private static let summaryKey = "johan.alarms.morningSummary"
+    private static let summaryDayKey = "johan.alarms.morningSummaryDay"
+
+    /// Whether stopping an alarm posts the morning summary. On unless switched off.
+    var morningSummary: Bool {
+        get { UserDefaults.standard.object(forKey: Self.summaryKey) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.summaryKey)
+            if newValue { Self.requestNotifications() }
+        }
+    }
+
+    static func requestNotifications() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    /// The wearer stopped an alarm (`JohanAlarmStopIntent`, which iOS runs in this process). Posts the
+    /// morning summary, once per day: recovery, last night's sleep and today's strain target, as far as
+    /// they are known by now. A night the strap has not synced yet has no recovery, and the summary says
+    /// so rather than showing yesterday's.
+    func alarmStopped() async {
+        guard morningSummary, let model = AppModel.shared else { return }
+        let dayKey = Repository.logicalDayKey(Date())
+        guard UserDefaults.standard.string(forKey: Self.summaryDayKey) != dayKey else { return }
+        await model.repo.refresh()
+        let home = JohanHomeModel()
+        await home.load(repo: model.repo, profile: model.profile)
+        let s = home.snapshot
+        let sleepMin = s.isToday ? model.repo.today?.totalSleepMin : nil
+        let copy = Self.summaryCopy(recovery: s.recovery, sleepMin: sleepMin, target: s.targetBand)
+        let center = UNUserNotificationCenter.current()
+        guard await center.notificationSettings().authorizationStatus == .authorized else { return }
+        let content = UNMutableNotificationContent()
+        content.title = copy.title
+        content.body = copy.body
+        content.sound = .default
+        try? await center.add(UNNotificationRequest(identifier: "johan-morning-summary", content: content, trigger: nil))
+        UserDefaults.standard.set(dayKey, forKey: Self.summaryDayKey)
+    }
+
+    static func summaryCopy(recovery: Double?, sleepMin: Double?, target: ClosedRange<Int>?) -> (title: String, body: String) {
+        var parts: [String] = []
+        if let recovery {
+            let pct = (recovery / 100).formatted(.percent.precision(.fractionLength(0)))
+            parts.append(String(localized: "Recovery \(pct)"))
+        }
+        if let sleepMin, sleepMin > 0 {
+            let m = Int(sleepMin.rounded())
+            parts.append(String(localized: "Slept \(m / 60) h \(m % 60) min"))
+        }
+        if let target { parts.append(String(localized: "Strain target \(target.lowerBound)–\(target.upperBound)")) }
+        var body = parts.joined(separator: " · ")
+        if recovery == nil {
+            let note = String(localized: "Recovery appears once the strap has synced the night.")
+            body = body.isEmpty ? note : body + "\n" + note
+        }
+        return (String(localized: "Good morning"), body)
     }
 
     // MARK: Updates
@@ -241,6 +310,30 @@ final class JohanAlarmStore: ObservableObject {
         case 7: return .saturday
         default: return nil
         }
+    }
+}
+
+/// The Stop button of a JohanUI alarm. iOS runs it in NOOP's process, so stopping an alarm is a moment
+/// the app reliably learns about, unlike the ring itself. Stops the alarm, then posts the morning summary.
+@available(iOS 26.0, *)
+struct JohanAlarmStopIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Stop Alarm"
+    static var isDiscoverable = false
+
+    @Parameter(title: "Alarm")
+    var alarmID: String
+
+    init() {}
+
+    init(alarmID: UUID) {
+        self.alarmID = alarmID.uuidString
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if let id = UUID(uuidString: alarmID) { try? AlarmManager.shared.stop(id: id) }
+        await JohanAlarmStore.shared.alarmStopped()
+        return .result()
     }
 }
 #endif

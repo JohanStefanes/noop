@@ -51,6 +51,7 @@ private struct JohanAlarmsList: View {
                     }
                 }
             }
+            summaryCard
             strapCard
         }
         .toolbar {
@@ -106,6 +107,20 @@ private struct JohanAlarmsList: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The morning summary switch: posted when an alarm is stopped.
+    private var summaryCard: some View {
+        JohanCard {
+            Toggle(isOn: Binding(get: { store.morningSummary }, set: { store.morningSummary = $0 })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Morning summary").font(.system(.subheadline, weight: .semibold))
+                    Text("When you stop an alarm: recovery, last night's sleep and today's strain target, once a day.")
+                        .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                }
+            }
+            .tint(JohanTheme.recoveryGreen)
         }
     }
 

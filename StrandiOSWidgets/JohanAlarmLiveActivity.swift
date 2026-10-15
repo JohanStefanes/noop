@@ -14,9 +14,9 @@ struct JohanAlarmLiveActivity: Widget {
                     .font(.title2)
                     .foregroundStyle(context.attributes.tintColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(context.attributes.metadata?.label ?? String(localized: "Alarm"))
+                    Text(context.attributes.metadata?.label ?? context.attributes.metadata?.alarmWord ?? "Alarm")
                         .font(.caption).foregroundStyle(StrandPalette.textSecondary)
-                    status(context.state.mode)
+                    status(context.state.mode, context.attributes.metadata)
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .foregroundStyle(StrandPalette.textPrimary)
                 }
@@ -31,7 +31,7 @@ struct JohanAlarmLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label { status(context.state.mode) } icon: { Image(systemName: "alarm.fill") }
+                    Label { status(context.state.mode, context.attributes.metadata) } icon: { Image(systemName: "alarm.fill") }
                         .font(.subheadline)
                         .lineLimit(1)
                 }
@@ -49,12 +49,11 @@ struct JohanAlarmLiveActivity: Widget {
         }
     }
 
-    private func status(_ mode: AlarmPresentationState.Mode) -> Text {
+    private func status(_ mode: AlarmPresentationState.Mode, _ words: JohanAlarmMetadata?) -> Text {
         switch mode {
-        case .countdown: return Text("Snoozing")
-        case .paused: return Text("Paused")
-        case .alert: return Text("Alarm")
-        @unknown default: return Text("Alarm")
+        case .countdown: return Text(verbatim: words?.snoozingWord ?? "Snoozing")
+        case .paused: return Text(verbatim: words?.pausedWord ?? "Paused")
+        default: return Text(verbatim: words?.alarmWord ?? "Alarm")
         }
     }
 
