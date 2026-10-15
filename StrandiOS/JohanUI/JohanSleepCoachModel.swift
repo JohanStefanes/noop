@@ -50,10 +50,16 @@ final class JohanSleepCoachModel: ObservableObject {
         debt = ledger
         debtTrend = Array(SleepDebt.debtSeries(series: series, needHours: needMin / 60).suffix(SleepDebt.defaultWindowNights))
 
-        // Tomorrow's wake time as the wearer configured it (per-weekday overrides included).
+        // The next wake time as the wearer configured it (per-weekday overrides included): this morning's
+        // while it is still ahead (opened after midnight), otherwise tomorrow's.
         let cal = Calendar.current
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-        let wake = WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: tomorrow))
+        let now = Date()
+        let nowMin = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
+        let todayWake = WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: now))
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: now) ?? now
+        let wake = nowMin < todayWake
+            ? todayWake
+            : WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: tomorrow))
 
         let payback = min(ledger.magnitudeMin, Self.maxPaybackMin)
         let target = ledger.needMin + payback
