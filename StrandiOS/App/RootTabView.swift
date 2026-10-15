@@ -668,7 +668,7 @@ private struct JohanUIToggleRow: View {
                     .font(.system(size: 17, weight: .regular))
                     .foregroundStyle(StrandPalette.accent)
                     .frame(width: 26, alignment: .center)
-                Text("Johan-Oberfläche")
+                Text("Johan Interface")
                     .font(StrandFont.body)
                     .foregroundStyle(StrandPalette.textPrimary)
             }

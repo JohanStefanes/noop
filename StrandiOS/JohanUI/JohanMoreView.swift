@@ -31,16 +31,16 @@ struct JohanMoreView: View {
     private var rows: [(section: String, rows: [Row])] {
         [
             (String(localized: "Training & Body"), [
-                Row(id: "live", title: "Live", icon: "waveform.path.ecg", tint: JohanTheme.recoveryRed, destination: AnyView(LiveView())),
-                Row(id: "workouts", title: "Workouts", icon: "figure.run", tint: JohanTheme.strainBlue, destination: AnyView(WorkoutsView())),
-                Row(id: "lift", title: "Lift Log", icon: "dumbbell.fill", tint: JohanTheme.strainBlue, destination: AnyView(LiftLogView())),
+                Row(id: "live", title: String(localized: "Live"), icon: "waveform.path.ecg", tint: JohanTheme.recoveryRed, destination: AnyView(LiveView())),
+                Row(id: "workouts", title: String(localized: "Workouts"), icon: "figure.run", tint: JohanTheme.strainBlue, destination: AnyView(WorkoutsView())),
+                Row(id: "lift", title: String(localized: "Lift Log"), icon: "dumbbell.fill", tint: JohanTheme.strainBlue, destination: AnyView(LiftLogView())),
                 Row(id: "health", title: String(localized: "Health"), icon: "heart.text.square.fill", tint: JohanTheme.recoveryRed, destination: AnyView(HealthView())),
-                Row(id: "stress", title: "Stress", icon: "bolt.heart.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(StressView())),
+                Row(id: "stress", title: String(localized: "Stress"), icon: "bolt.heart.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(StressView())),
                 Row(id: "breathe", title: String(localized: "Breathe"), icon: "wind", tint: JohanTheme.sleepViolet, destination: AnyView(BreathingView()))
             ]),
             (String(localized: "Insights"), [
-                Row(id: "trends", title: "Trends", icon: "chart.line.uptrend.xyaxis", tint: JohanTheme.strainBlue, destination: AnyView(TrendsView())),
-                Row(id: "coach", title: "Coach", icon: "sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(CoachView())),
+                Row(id: "trends", title: String(localized: "Trends"), icon: "chart.line.uptrend.xyaxis", tint: JohanTheme.strainBlue, destination: AnyView(TrendsView())),
+                Row(id: "coach", title: String(localized: "Coach"), icon: "sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(CoachView())),
                 Row(id: "insights", title: String(localized: "Journal & Insights"), icon: "lightbulb.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(InsightsView())),
                 Row(id: "hub", title: String(localized: "What Moves You"), icon: "wand.and.sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(InsightsHubView())),
                 Row(id: "watchCompare", title: String(localized: "MG vs Watch"), icon: "applewatch", tint: JohanTheme.strainBlue, destination: AnyView(JohanWatchCompareView()))
@@ -49,7 +49,7 @@ struct JohanMoreView: View {
                 Row(id: "alarms", title: String(localized: "Alarms"), icon: "alarm.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(SmartAlarmView())),
                 Row(id: "alarmLink", title: String(localized: "Alarm Vibration"), icon: "alarm.waves.left.and.right", tint: JohanTheme.recoveryYellow, destination: AnyView(JohanAlarmLinkView())),
                 Row(id: "devices", title: String(localized: "Devices"), icon: JohanStrapGlyph.iconName, tint: Self.neutral, destination: AnyView(DevicesView())),
-                Row(id: "backup", title: "Backup & Sync", icon: "externaldrive.fill.badge.icloud", tint: Self.neutral, destination: AnyView(BackupSyncView())),
+                Row(id: "backup", title: String(localized: "Backup & Sync"), icon: "externaldrive.fill.badge.icloud", tint: Self.neutral, destination: AnyView(BackupSyncView())),
                 Row(id: "settings", title: String(localized: "Settings"), icon: "gearshape.fill", tint: Self.neutral, destination: AnyView(SettingsView()))
             ]),
             (String(localized: "Classic View"), [
