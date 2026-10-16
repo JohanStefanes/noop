@@ -100,15 +100,95 @@ final class DeviceConfigWriteGateTests: XCTestCase {
         for key in DeviceConfigWriteGate.outOfScopeKeys {
             XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
                 opcode: 119, payload: payload(key: key),
-                ecgGateOptIn: true, isMG: true, broadcastHrOptIn: true),
+                ecgGateOptIn: true, isMG: true, broadcastHrOptIn: true, liveSecondHrmOptIn: true),
                 "\(key) must never be writable from this path")
         }
-        XCTAssertEqual(DeviceConfigWriteGate.outOfScopeKeys.count, 5)
-        // The five out-of-scope keys plus the two writable ones are exactly what the strap enumerated.
+        XCTAssertEqual(DeviceConfigWriteGate.outOfScopeKeys.count, 4)
+        XCTAssertFalse(DeviceConfigWriteGate.outOfScopeKeys.contains(DeviceConfigWriteGate.liveSecondHrmKey))
+        // The four out-of-scope keys plus the three writable ones are exactly what the strap enumerated.
         XCTAssertEqual(Set(DeviceConfigWriteGate.outOfScopeKeys)
-                        .union([DeviceConfigWriteGate.ecgRawDataKey, DeviceConfigWriteGate.broadcastHrKey]),
+                        .union([DeviceConfigWriteGate.ecgRawDataKey, DeviceConfigWriteGate.broadcastHrKey,
+                                DeviceConfigWriteGate.liveSecondHrmKey]),
                        Set(DeviceConfigWriteGate.enumeratedKeys))
         XCTAssertEqual(DeviceConfigWriteGate.enumeratedKeys.count, 7)
+    }
+
+    // MARK: - whoop_live_2_hrm_devices (opt-in, effect unverified)
+
+    func testAdmitsSecondHrmKeyOnlyWithItsOwnOptInOnAnAttestedMG() {
+        let p = payload(key: DeviceConfigWriteGate.liveSecondHrmKey, value: LiveSecondHrmRestore.enableValue)
+        XCTAssertTrue(DeviceConfigWriteGate.admitsSend(
+            opcode: 119, payload: p, ecgGateOptIn: false, isMG: true, broadcastHrOptIn: false, liveSecondHrmOptIn: true))
+        // Default-off: the omitted argument is false.
+        XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
+            opcode: 119, payload: p, ecgGateOptIn: true, isMG: true, broadcastHrOptIn: true))
+        XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
+            opcode: 119, payload: p, ecgGateOptIn: true, isMG: true, broadcastHrOptIn: true, liveSecondHrmOptIn: false))
+        // Unattested / plain 5.0.
+        XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
+            opcode: 119, payload: p, ecgGateOptIn: false, isMG: false, broadcastHrOptIn: false, liveSecondHrmOptIn: true))
+        // Its opt-in does not unlock the other two keys.
+        for key in [DeviceConfigWriteGate.ecgRawDataKey, DeviceConfigWriteGate.broadcastHrKey] {
+            XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
+                opcode: 119, payload: payload(key: key), ecgGateOptIn: false, isMG: true,
+                broadcastHrOptIn: false, liveSecondHrmOptIn: true))
+        }
+    }
+
+    func testSecondHrmAdmitsOnlyTriStateValueBytes() {
+        for v in UInt8.min...UInt8.max {
+            let ok = DeviceConfigWriteGate.admitsSend(
+                opcode: 119, payload: payload(key: DeviceConfigWriteGate.liveSecondHrmKey, value: v),
+                ecgGateOptIn: false, isMG: true, broadcastHrOptIn: false, liveSecondHrmOptIn: true)
+            XCTAssertEqual(ok, (0x30...0x32).contains(v), "value byte \(v)")
+        }
+    }
+
+    func testSecondHrmOffWriteIsNotExemptFromItsOptIn() {
+        // Unlike Broadcast-HR (#1061) the undo is the stored original, sent while the opt-in is still on.
+        for v: UInt8 in [0x30, 0x31, 0x32] {
+            XCTAssertFalse(DeviceConfigWriteGate.admitsSend(
+                opcode: 119, payload: payload(key: DeviceConfigWriteGate.liveSecondHrmKey, value: v),
+                ecgGateOptIn: true, isMG: true, broadcastHrOptIn: true, liveSecondHrmOptIn: false))
+        }
+    }
+
+    // MARK: - LiveSecondHrmRestore (pure)
+
+    func testRestoreOriginalLogic() {
+        // An already-persisted original always wins over a later read (which may be our own write).
+        XCTAssertEqual(LiveSecondHrmRestore.originalToPersist(alreadyStored: "2", currentRead: "1"), "2")
+        XCTAssertEqual(LiveSecondHrmRestore.originalToPersist(alreadyStored: nil, currentRead: "0"), "0")
+        // No restorable original -> nil -> the caller must not write.
+        XCTAssertNil(LiveSecondHrmRestore.originalToPersist(alreadyStored: nil, currentRead: nil))
+        XCTAssertNil(LiveSecondHrmRestore.originalToPersist(alreadyStored: nil, currentRead: "7"))
+        XCTAssertNil(LiveSecondHrmRestore.originalToPersist(alreadyStored: "x", currentRead: nil))
+        // Restore writes the stored original, not a blind '0'.
+        XCTAssertEqual(LiveSecondHrmRestore.restoreByte(original: "2"), 0x32)
+        XCTAssertEqual(LiveSecondHrmRestore.restoreByte(original: "1"), 0x31)
+        XCTAssertNil(LiveSecondHrmRestore.restoreByte(original: nil))
+        XCTAssertNil(LiveSecondHrmRestore.restoreByte(original: "12"))
+        // Settlement is decided by the read-back alone.
+        XCTAssertEqual(LiveSecondHrmRestore.settle(original: "2", readBack: "2"),
+                       .init(optInStaysOn: false, discardOriginal: true))
+        XCTAssertEqual(LiveSecondHrmRestore.settle(original: "2", readBack: "1"),
+                       .init(optInStaysOn: true, discardOriginal: false))
+        XCTAssertEqual(LiveSecondHrmRestore.settle(original: "2", readBack: nil),
+                       .init(optInStaysOn: true, discardOriginal: false))
+    }
+
+    func testSecondHrmPayloadAndReadValue() {
+        let p = LiveSecondHrmRestore.writePayload(valueByte: 0x32)
+        XCTAssertEqual(p, payload(key: DeviceConfigWriteGate.liveSecondHrmKey, value: 0x32))
+        XCTAssertNil(LiveSecondHrmRestore.writePayload(valueByte: 0x33))
+        let key = DeviceConfigWriteGate.liveSecondHrmKey
+        let good = DeviceConfigReadProbe.ValueResponse(resultCode: 1, record: echoRecord(key: key, value: "1"))
+        XCTAssertEqual(LiveSecondHrmRestore.readValue(good), "1")
+        // Not echoed, refused, or a non-tri-state byte: no value is claimed.
+        XCTAssertNil(LiveSecondHrmRestore.readValue(.init(resultCode: 1, record: echoRecord(key: "other", value: "1"))))
+        XCTAssertNil(LiveSecondHrmRestore.readValue(.init(resultCode: 3, record: echoRecord(key: key, value: "1"))))
+        XCTAssertNil(LiveSecondHrmRestore.readValue(.init(resultCode: 0, record: echoRecord(key: key, value: "1"))))
+        XCTAssertNil(LiveSecondHrmRestore.readValue(.init(resultCode: 1, record: echoRecord(key: key, value: "9"))))
     }
 
     func testRefusesSetFeatureFlagValue120ForEveryKeyAndEveryOptIn() {

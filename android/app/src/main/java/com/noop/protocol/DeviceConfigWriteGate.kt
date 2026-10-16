@@ -1,8 +1,9 @@
 package com.noop.protocol
 
 /**
- * #891 / #103: the ONE device-config key this app may write beyond the Broadcast-HR flag —
- * `enable_raw_data_w_ecg` — and the key-aware allowlist that keeps every other key off the wire.
+ * #891 / #103: the device-config keys this app may write beyond the Broadcast-HR flag —
+ * `enable_raw_data_w_ecg`, and the opt-in `whoop_live_2_hrm_devices` — and the key-aware allowlist that
+ * keeps every other key off the wire.
  *
  * ## Where the key came from
  *
@@ -55,15 +56,26 @@ package com.noop.protocol
  * Opcode 119 is shared: the Broadcast-HR flag (#181) writes through it too. An opcode-only allowlist
  * therefore cannot express "this key and no other", and before this file the 5/MG send path admitted ANY
  * device-config key while the Broadcast-HR opt-in happened to be on. [admitsSend] closes that: it parses
- * the key name out of the body and admits exactly two keys, each only while its OWN opt-in is on. The five
+ * the key name out of the body and admits exactly three keys, each only while its OWN opt-in is on. The four
  * remaining enumerated keys are named in [OUT_OF_SCOPE_KEYS] and are refused unconditionally — their
  * effects are unknown and nothing here has any reason to move them.
+ *
+ * ## The third key: `whoop_live_2_hrm_devices`
+ *
+ * A tri-state key (ASCII `'0'`/`'1'`/`'2'`) that `docs/PROTOCOL_CONFIGURATION.md` describes as "stored 1
+ * selects the named preference; 0/2 do not". **What writing it does is UNKNOWN**: the strap's connection
+ * capacity and the factory state of the key remain unresolved, and writing `'0'` is not a universal reset.
+ * It is therefore admitted only while its own default-off opt-in is on, only on an attested MG, and only
+ * with a value byte of `'0'`, `'1'` or `'2'`. The app layer reads the stored value with
+ * `GET_DEVICE_CONFIG_VALUE(121)` BEFORE the first write, persists it, and undoes by writing THAT value
+ * back (see [LiveSecondHrmRestore]) rather than a blind `'0'`. Every write is followed by a 121 read-back;
+ * only the read-back value is reported.
  *
  * This is the same discipline [DeviceConfigReadProbe.isReadOnlyOpcode] established for the read probes: a
  * single pure predicate that the BLE send path itself consults, so a unit test proving the predicate
  * rejects something is proving it about the real wire path and not about a parallel copy of the rule.
  *
- * Pure: no Android BLE, no I/O, no preferences. The caller supplies the two opt-in booleans. Twin of the
+ * Pure: no Android BLE, no I/O, no preferences. The caller supplies the three opt-in booleans. Twin of the
  * Swift `DeviceConfigWriteGate` — keep them byte-identical.
  */
 object DeviceConfigWriteGate {
@@ -89,7 +101,12 @@ object DeviceConfigWriteGate {
     /** The Broadcast-HR key (#181), hardware-validated. Admitted only while ITS own opt-in is on. */
     const val BROADCAST_HR_KEY = "whoop_live_hr_in_adv_ind_pkt"
 
-    /** The other five keys the strap's 115/116 enumeration listed. Each refused unconditionally: their
+    /** The two-receiver live-HR preference (tri-state `'0'`/`'1'`/`'2'`). Effect UNVERIFIED — connection
+     *  capacity and factory state are unresolved. Admitted only while ITS own opt-in is on, on an attested
+     *  MG, with a tri-state value byte; undone by restoring the value read before the first write. */
+    const val LIVE_SECOND_HRM_KEY = "whoop_live_2_hrm_devices"
+
+    /** The other four keys the strap's 115/116 enumeration listed. Each refused unconditionally: their
      *  effects are undocumented and unmeasured, and `max_collection_backlog` in particular reads `"0.0"`,
      *  which is not even a flag. Listed rather than merely omitted so the refusal is testable. */
     val OUT_OF_SCOPE_KEYS: List<String> = listOf(
@@ -97,7 +114,6 @@ object DeviceConfigWriteGate {
         "enable_rfid",
         "max_collection_backlog",
         "cont_collection_mode",
-        "whoop_live_2_hrm_devices",
     )
 
     /** Every device-config key the strap enumerated, in the order it served them. Reported in the UI and
@@ -108,7 +124,7 @@ object DeviceConfigWriteGate {
         "max_collection_backlog",
         "cont_collection_mode",
         BROADCAST_HR_KEY,
-        "whoop_live_2_hrm_devices",
+        LIVE_SECOND_HRM_KEY,
         ECG_RAW_DATA_KEY,
     )
 
@@ -174,11 +190,11 @@ object DeviceConfigWriteGate {
     // The allowlist predicate -----------------------------------------------------------------------
 
     /**
-     * Whether a device-config KEY may be written, given the two opt-ins and the hardware attestation.
+     * Whether a device-config KEY may be written, given the opt-ins and the hardware attestation.
      *
-     * `false` for every key that is not one of the two named ones — including all five of
-     * [OUT_OF_SCOPE_KEYS], and including any key a future edit invents. The ECG key additionally requires
-     * [isMG]: `Whoop5Variant.UNKNOWN` is not MG, so an unattested strap fails this the same way a plain
+     * `false` for every key that is not one of the three named ones — including all four of
+     * [OUT_OF_SCOPE_KEYS], and including any key a future edit invents. The ECG key and the second-HRM key
+     * additionally require [isMG]: `Whoop5Variant.UNKNOWN` is not MG, so an unattested strap fails this the same way a plain
      * 5.0 does.
      */
     fun isWritableKey(
@@ -186,9 +202,11 @@ object DeviceConfigWriteGate {
         ecgGateOptIn: Boolean,
         isMG: Boolean,
         broadcastHrOptIn: Boolean,
+        liveSecondHrmOptIn: Boolean = false,
     ): Boolean = when (key) {
         ECG_RAW_DATA_KEY -> ecgGateOptIn && isMG
         BROADCAST_HR_KEY -> broadcastHrOptIn
+        LIVE_SECOND_HRM_KEY -> liveSecondHrmOptIn && isMG
         else -> false
     }
 
@@ -205,9 +223,14 @@ object DeviceConfigWriteGate {
         ecgGateOptIn: Boolean,
         isMG: Boolean,
         broadcastHrOptIn: Boolean,
+        liveSecondHrmOptIn: Boolean = false,
     ): Boolean {
         if (opcode != SET_DEVICE_CONFIG_VALUE_CMD) return false
         val key = keyNameInSendPayload(payload) ?: return false
+        // The second-HRM key is tri-state: only '0'/'1'/'2' may ever be written, and (unlike Broadcast-HR)
+        // there is NO opt-in-free off write — the undo restores the stored original and is sent while the
+        // opt-in is still on, so it never needs an exemption.
+        if (key == LIVE_SECOND_HRM_KEY && !LiveSecondHrmRestore.isTriState(valueByteInSendPayload(payload))) return false
         // #1061: turning the Broadcast-HR flag OFF is the safe UNDO and must NEVER be gated on the opt-in.
         // The opt-in is bound straight to the Settings switch, so it is already false by the time the user
         // disables — gating the OFF write on it made the toggle-off path DEAD (the disable refused here, the
@@ -215,7 +238,7 @@ object DeviceConfigWriteGate {
         // records for SET_FF_VALUE. Admit the Broadcast-HR OFF write unconditionally; the ON write (and the
         // ECG key, both directions) stay gated by [isWritableKey]. Byte-identical to the Swift twin.
         if (key == BROADCAST_HR_KEY && valueByteInSendPayload(payload) == DISABLED_VALUE) return true
-        return isWritableKey(key, ecgGateOptIn, isMG, broadcastHrOptIn)
+        return isWritableKey(key, ecgGateOptIn, isMG, broadcastHrOptIn, liveSecondHrmOptIn)
     }
 
     /** The read verb the post-write verification is allowed to send, and only that one. */
@@ -540,4 +563,46 @@ class BroadcastHrGateReport(on: Boolean) {
         sb.append("result for #1061.\n")
         return sb.toString()
     }
+}
+
+/**
+ * Pure decision logic for the opt-in `whoop_live_2_hrm_devices` write (effect UNVERIFIED). Twin of the
+ * Swift `LiveSecondHrmRestore`. The key is tri-state and writing `'0'` is not a universal reset, so the
+ * undo is "write back exactly what was read before the first write", never a blind `'0'`.
+ */
+object LiveSecondHrmRestore {
+
+    /** The value written by the opt-in: `'1'`. */
+    const val ENABLE_VALUE = DeviceConfigWriteGate.ENABLED_VALUE
+
+    /** Whether a byte is one of the ASCII tri-state digits `'0'`, `'1'`, `'2'`. */
+    fun isTriState(byte: Int?): Boolean = byte != null && byte in 0x30..0x32
+
+    /** The tri-state digit a 121 read-back reported for the key; null means "no value claimed". */
+    fun readValue(r: DeviceConfigReadProbe.ValueResponse): String? {
+        if (r.isUnsupported || r.isFailure) return null
+        val b = r.valueFor(DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY) ?: return null
+        return if (isTriState(b)) b.toChar().toString() else null
+    }
+
+    private fun single(s: String?): Int? =
+        if (s != null && s.length == 1 && isTriState(s[0].code)) s[0].code else null
+
+    /** Which original to persist before the first write; an already-persisted original always wins. null
+     *  means "no restorable original": the caller must NOT write. */
+    fun originalToPersist(alreadyStored: String?, currentRead: String?): String? {
+        single(alreadyStored)?.let { return it.toChar().toString() }
+        return single(currentRead)?.toChar()?.toString()
+    }
+
+    /** The value byte that undoes the opt-in: the stored original, or null when there is none. */
+    fun restoreByte(original: String?): Int? = single(original)
+
+    /** Whether the opt-in stays on and whether the persisted original may be discarded, after read-back. */
+    data class Settlement(val optInStaysOn: Boolean, val discardOriginal: Boolean)
+
+    /** Settle after a write + read-back; [readBack] is the ONLY input about the strap's state. */
+    fun settle(original: String, readBack: String?): Settlement =
+        if (readBack == original) Settlement(optInStaysOn = false, discardOriginal = true)
+        else Settlement(optInStaysOn = true, discardOriginal = false)
 }

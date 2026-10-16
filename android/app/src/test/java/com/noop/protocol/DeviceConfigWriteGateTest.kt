@@ -103,18 +103,83 @@ class DeviceConfigWriteGateTest {
                 "$key must never be writable from this path",
                 DeviceConfigWriteGate.admitsSend(
                     119, payload(key), ecgGateOptIn = true, isMG = true, broadcastHrOptIn = true,
+                    liveSecondHrmOptIn = true,
                 ),
             )
         }
-        assertEquals(5, DeviceConfigWriteGate.OUT_OF_SCOPE_KEYS.size)
+        assertEquals(4, DeviceConfigWriteGate.OUT_OF_SCOPE_KEYS.size)
+        assertFalse(DeviceConfigWriteGate.OUT_OF_SCOPE_KEYS.contains(DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY))
         assertEquals(
             (
                 DeviceConfigWriteGate.OUT_OF_SCOPE_KEYS +
-                    listOf(DeviceConfigWriteGate.ECG_RAW_DATA_KEY, DeviceConfigWriteGate.BROADCAST_HR_KEY)
+                    listOf(
+                        DeviceConfigWriteGate.ECG_RAW_DATA_KEY, DeviceConfigWriteGate.BROADCAST_HR_KEY,
+                        DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY,
+                    )
                 ).toSet(),
             DeviceConfigWriteGate.ENUMERATED_KEYS.toSet(),
         )
         assertEquals(7, DeviceConfigWriteGate.ENUMERATED_KEYS.size)
+    }
+
+    // whoop_live_2_hrm_devices (opt-in, effect unverified) --------------------------------------------
+
+    @Test
+    fun admitsSecondHrmKeyOnlyWithItsOwnOptInOnAnAttestedMG() {
+        val p = payload(DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY, LiveSecondHrmRestore.ENABLE_VALUE)
+        assertTrue(DeviceConfigWriteGate.admitsSend(119, p, ecgGateOptIn = false, isMG = true, broadcastHrOptIn = false, liveSecondHrmOptIn = true))
+        // Default-off: the omitted argument is false.
+        assertFalse(DeviceConfigWriteGate.admitsSend(119, p, ecgGateOptIn = true, isMG = true, broadcastHrOptIn = true))
+        assertFalse(DeviceConfigWriteGate.admitsSend(119, p, ecgGateOptIn = true, isMG = true, broadcastHrOptIn = true, liveSecondHrmOptIn = false))
+        assertFalse(DeviceConfigWriteGate.admitsSend(119, p, ecgGateOptIn = false, isMG = false, broadcastHrOptIn = false, liveSecondHrmOptIn = true))
+        for (key in listOf(DeviceConfigWriteGate.ECG_RAW_DATA_KEY, DeviceConfigWriteGate.BROADCAST_HR_KEY)) {
+            assertFalse(DeviceConfigWriteGate.admitsSend(119, payload(key), ecgGateOptIn = false, isMG = true, broadcastHrOptIn = false, liveSecondHrmOptIn = true))
+        }
+    }
+
+    @Test
+    fun secondHrmAdmitsOnlyTriStateValueBytes() {
+        for (v in 0..255) {
+            val ok = DeviceConfigWriteGate.admitsSend(
+                119, payload(DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY, v),
+                ecgGateOptIn = false, isMG = true, broadcastHrOptIn = false, liveSecondHrmOptIn = true,
+            )
+            assertEquals("value byte $v", v in 0x30..0x32, ok)
+        }
+    }
+
+    @Test
+    fun secondHrmOffWriteIsNotExemptFromItsOptIn() {
+        for (v in listOf(0x30, 0x31, 0x32)) {
+            assertFalse(
+                DeviceConfigWriteGate.admitsSend(
+                    119, payload(DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY, v),
+                    ecgGateOptIn = true, isMG = true, broadcastHrOptIn = true, liveSecondHrmOptIn = false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun restoreOriginalLogic() {
+        assertEquals("2", LiveSecondHrmRestore.originalToPersist("2", "1"))
+        assertEquals("0", LiveSecondHrmRestore.originalToPersist(null, "0"))
+        assertNull(LiveSecondHrmRestore.originalToPersist(null, null))
+        assertNull(LiveSecondHrmRestore.originalToPersist(null, "7"))
+        assertNull(LiveSecondHrmRestore.originalToPersist("x", null))
+        assertEquals(0x32, LiveSecondHrmRestore.restoreByte("2"))
+        assertEquals(0x31, LiveSecondHrmRestore.restoreByte("1"))
+        assertNull(LiveSecondHrmRestore.restoreByte(null))
+        assertNull(LiveSecondHrmRestore.restoreByte("12"))
+        assertEquals(LiveSecondHrmRestore.Settlement(false, true), LiveSecondHrmRestore.settle("2", "2"))
+        assertEquals(LiveSecondHrmRestore.Settlement(true, false), LiveSecondHrmRestore.settle("2", "1"))
+        assertEquals(LiveSecondHrmRestore.Settlement(true, false), LiveSecondHrmRestore.settle("2", null))
+        val key = DeviceConfigWriteGate.LIVE_SECOND_HRM_KEY
+        assertEquals("1", LiveSecondHrmRestore.readValue(DeviceConfigReadProbe.ValueResponse(1, echoRecord(key, "1"))))
+        assertNull(LiveSecondHrmRestore.readValue(DeviceConfigReadProbe.ValueResponse(1, echoRecord("other", "1"))))
+        assertNull(LiveSecondHrmRestore.readValue(DeviceConfigReadProbe.ValueResponse(3, echoRecord(key, "1"))))
+        assertNull(LiveSecondHrmRestore.readValue(DeviceConfigReadProbe.ValueResponse(0, echoRecord(key, "1"))))
+        assertNull(LiveSecondHrmRestore.readValue(DeviceConfigReadProbe.ValueResponse(1, echoRecord(key, "9"))))
     }
 
     @Test

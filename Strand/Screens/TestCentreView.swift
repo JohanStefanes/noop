@@ -50,6 +50,8 @@ struct TestCentreView: View {
     @AppStorage(PuffinExperiment.deepDataKey) private var deepDataEnabled = false
     @AppStorage(PuffinExperiment.broadcastHrKey) private var broadcastHrEnabled = false
     @AppStorage(PuffinExperiment.ecgRawDataKey) private var ecgRawDataEnabled = false
+    @AppStorage(PuffinExperiment.liveSecondHrmKey) private var liveSecondHrmEnabled = false
+    @State private var showSecondHrmConfirm = false
 
     /// The strap model the user last picked, the same key SettingsView's showFiveMGControls gate reads.
     @AppStorage("selectedWhoopModel") private var selectedWhoopModelRaw = WhoopModel.whoop4.rawValue
@@ -181,6 +183,13 @@ struct TestCentreView: View {
         .sheet(item: $report.pending) { _ in
             ReportReviewSheet(report: report)
         }
+        .confirmationDialog("Write the second-receiver setting to your strap?",
+                            isPresented: $showSecondHrmConfirm, titleVisibility: .visible) {
+            Button("Read, save and write") { model.ble.setLiveSecondHrm(true) }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This changes the setting whoop_live_2_hrm_devices on your WHOOP 5/MG so it may serve live heart rate to two receivers. NOOP has not verified what this does, and it may change how your strap connects. NOOP first reads the current value and saves it. To undo, turn this switch off: NOOP writes the saved value back and reads it again to confirm. Nothing is written until you confirm.")
+        }
         .confirmationDialog("Recalibrate your Charge baseline?",
                             isPresented: $showRecalibrateConfirm, titleVisibility: .visible) {
             Button("Recalibrate") { recalibrateCharge() }
@@ -267,6 +276,26 @@ struct TestCentreView: View {
                     .onChangeCompat(of: broadcastHrEnabled) { model.ble.setBroadcastHr($0) }
                 Text("Writes the reversible 5/MG advertising flag for Garmin, Zwift, and compatible gym equipment.")
                     .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+
+                Divider().overlay(StrandPalette.hairline)
+                Toggle("Second live heart-rate receiver (unverified)", isOn: Binding(
+                    get: { liveSecondHrmEnabled },
+                    set: { on in
+                        // Never written from the switch alone: ON asks first, OFF restores the saved value.
+                        if on { showSecondHrmConfirm = true } else { model.ble.setLiveSecondHrm(false) }
+                    }))
+                    .toggleStyle(.switch).tint(StrandPalette.accent)
+                    .disabled(!live.encryptedBond || live.whoop5Variant != Whoop5Variant.mg.label || live.liveSecondHrmBusy)
+                Text("Writes the WHOOP MG setting whoop_live_2_hrm_devices so the strap may serve live heart rate to two receivers. What it does is unverified. Turning it off writes back the value NOOP read first.")
+                    .font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let value = live.liveSecondHrmReadBack {
+                    Text("strap reports: \(value)")
+                        .font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                } else {
+                    Text("strap reports: unknown")
+                        .font(StrandFont.caption).foregroundStyle(StrandPalette.textSecondary)
+                }
 
                 Divider().overlay(StrandPalette.hairline)
                 Toggle("Legacy R22 feature-flag experiment", isOn: $deepDataEnabled)

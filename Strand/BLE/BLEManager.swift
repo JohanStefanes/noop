@@ -2412,12 +2412,13 @@ public final class BLEManager: NSObject, ObservableObject {
                                                     payload: payload,
                                                     ecgGateOptIn: PuffinExperiment.ecgRawDataEnabled,
                                                     isMG: isWhoop5MG,
-                                                    broadcastHrOptIn: PuffinExperiment.broadcastHrEnabled)
+                                                    broadcastHrOptIn: PuffinExperiment.broadcastHrEnabled,
+                                                    liveSecondHrmOptIn: PuffinExperiment.liveSecondHrmEnabled)
                 // GET_DEVICE_CONFIG_VALUE(121) as a gate's mandatory READ-BACK — gated on a write being
                 // verified, exactly like the R22 read-back above. The write ack is never the proof. Both the
                 // ECG gate (#891) and the Broadcast-HR gate (#1061) read themselves back over this opcode.
                 || (DeviceConfigWriteGate.isReadBackOpcode(command.rawValue)
-                    && (ecgGateReport != nil || broadcastHrGateReport != nil))
+                    && (ecgGateReport != nil || broadcastHrGateReport != nil || secondHrmFlow != nil))
                 // The WHOOP MG ECG ("Labrador") family — allowed ONLY when BOTH gates hold: the
                 // Experimental opt-in is on AND the strap has POSITIVELY attested itself an MG over the
                 // Device Information Service. A plain 5.0 has no electrodes and an unidentified strap
@@ -3711,7 +3712,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // Mutually exclusive with the ECG gate: both verify over the SAME 121 read-back opcode, so if both
         // were in flight one strap reply would be consumed by both handlers and cross-contaminate the other's
         // verdict (its key isn't echoed → a spurious notClaimed). Only one device-config write verifies at once.
-        guard broadcastHrGateReport == nil, ecgGateReport == nil else {
+        guard broadcastHrGateReport == nil, ecgGateReport == nil, secondHrmFlow == nil else {
             log("Broadcast HR: a device-config write is already being verified — ignored."); return
         }
         let payload = [0x01] + Whoop5Config.deviceConfigBody(name: DeviceConfigWriteGate.broadcastHrKey,
@@ -3781,6 +3782,194 @@ public final class BLEManager: NSObject, ObservableObject {
         finishBroadcastHrWrite()
     }
 
+    // MARK: - Second live-HR receiver (`whoop_live_2_hrm_devices`) — opt-in, effect UNVERIFIED
+
+    /// One run of the opt-in: preflight read of the current value, the write, then the mandatory read-back.
+    /// Non-nil only while a run is in flight; the 121 read-back allowlist clause consults it, and the frame
+    /// router routes the replies here. Single-flight with the ECG and Broadcast-HR gates (same 121 opcode).
+    private struct SecondHrmFlow {
+        enum Phase { case preflightRead, awaitingWriteReadBack }
+        let on: Bool
+        let strapId: String
+        var phase: Phase = .preflightRead
+        /// The value this run writes, as a digit string (the opt-in's '1', or the restored original).
+        var requested: String
+        var original: String
+        var writeAckCode: Int?
+        var step: Int
+    }
+    private var secondHrmFlow: SecondHrmFlow?
+    private var secondHrmStepCounter = 0
+
+    /// Request the opt-in (`on == true`) or its undo. Call ONLY from an explicit user action behind the
+    /// confirmation dialog — never from a connect path. ON: read the current value, persist it as the value
+    /// to restore, write '1', read back. OFF: write the persisted original back (not a blind '0'), read
+    /// back; the opt-in is cleared only when the read-back shows the original.
+    public func setLiveSecondHrm(_ on: Bool) {
+        let key = DeviceConfigWriteGate.liveSecondHrmKey
+        guard selectedModel.deviceFamily == .whoop5 else {
+            log("Second HRM: needs a WHOOP 5/MG strap selected — ignored."); return
+        }
+        guard whoop5Variant.isMG else {
+            log("Second HRM: the strap has not attested itself an MG over DIS (variant=\(whoop5Variant.label)) — ignored."); return
+        }
+        guard state.connected, state.encryptedBond else {
+            log("Second HRM: needs the full encrypted bond — ignored."); return
+        }
+        guard secondHrmFlow == nil, ecgGateReport == nil, broadcastHrGateReport == nil else {
+            log("Second HRM: a device-config write is already being verified — ignored."); return
+        }
+        guard let strapId = peripheral?.identifier.uuidString else {
+            log("Second HRM: no strap identity yet — ignored."); return
+        }
+        let defaults = UserDefaults.standard
+        let stored = defaults.string(forKey: PuffinExperiment.liveSecondHrmOriginalKey(strapId: strapId))
+        if !on {
+            // The undo needs a stored original; without one there is nothing to restore and NO blind '0'.
+            guard let restore = LiveSecondHrmRestore.restoreByte(original: stored) else {
+                log("Second HRM: no original value was stored for this strap, so nothing can be restored; no write sent. \(key) is unchanged by NOOP.")
+                return
+            }
+            guard PuffinExperiment.liveSecondHrmEnabled else {
+                log("Second HRM: the opt-in is not in force — nothing to undo."); return
+            }
+            secondHrmStepCounter &+= 1
+            let flow = SecondHrmFlow(on: false, strapId: strapId, phase: .awaitingWriteReadBack,
+                                     requested: String(UnicodeScalar(restore)), original: stored ?? "",
+                                     step: secondHrmStepCounter)
+            secondHrmFlow = flow
+            state.liveSecondHrmBusy = true
+            sendSecondHrmWrite(valueByte: restore, flow: flow)
+            return
+        }
+        // ON: preflight read first. Nothing is written until a restorable value has been read.
+        secondHrmStepCounter &+= 1
+        let flow = SecondHrmFlow(on: true, strapId: strapId, phase: .preflightRead,
+                                 requested: String(UnicodeScalar(LiveSecondHrmRestore.enableValue)),
+                                 original: stored ?? "", step: secondHrmStepCounter)
+        secondHrmFlow = flow
+        state.liveSecondHrmBusy = true
+        log("Second HRM: reading the current \(key) value with GET_DEVICE_CONFIG_VALUE(121) before any write.")
+        send(.getDeviceConfigValue, payload: LiveSecondHrmRestore.readPayload())
+        armSecondHrmTimeout(step: flow.step)
+    }
+
+    private func armSecondHrmTimeout(step: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + BLEManager.ecgGateReadBackTimeout) { [weak self] in
+            guard let self, let f = self.secondHrmFlow, f.step == step else { return }
+            self.finishSecondHrm(readBack: nil, note: "no readable reply within \(Int(BLEManager.ecgGateReadBackTimeout))s")
+        }
+    }
+
+    /// Write the value (gate-checked: `send` would drop a refused write silently), then read it back.
+    private func sendSecondHrmWrite(valueByte: UInt8, flow: SecondHrmFlow) {
+        let key = DeviceConfigWriteGate.liveSecondHrmKey
+        guard let payload = LiveSecondHrmRestore.writePayload(valueByte: valueByte) else {
+            finishSecondHrm(readBack: nil, note: "value byte is not tri-state; no write sent"); return
+        }
+        // The opt-in flag must be in force for the gate to admit this write; set it only now that a
+        // restorable original is persisted (ON) / while it is still owed (OFF).
+        if flow.on { UserDefaults.standard.set(true, forKey: PuffinExperiment.liveSecondHrmKey) }
+        guard DeviceConfigWriteGate.admitsSend(opcode: DeviceConfigWriteGate.setDeviceConfigValueCmd,
+                                               payload: payload,
+                                               ecgGateOptIn: PuffinExperiment.ecgRawDataEnabled,
+                                               isMG: isWhoop5MG,
+                                               broadcastHrOptIn: PuffinExperiment.broadcastHrEnabled,
+                                               liveSecondHrmOptIn: PuffinExperiment.liveSecondHrmEnabled) else {
+            if flow.on { UserDefaults.standard.set(false, forKey: PuffinExperiment.liveSecondHrmKey) }
+            secondHrmFlow = nil
+            state.liveSecondHrmBusy = false
+            log("Second HRM: write of \(key) REFUSED by the 5/MG send gate — no write sent.")
+            return
+        }
+        var f = flow
+        f.phase = .awaitingWriteReadBack
+        secondHrmFlow = f
+        log("Second HRM: writing \(key)='\(f.requested)' via SET_DEVICE_CONFIG_VALUE(119); the ack is NOT the result — a GET_DEVICE_CONFIG_VALUE(121) read-back follows.")
+        send(.setDeviceConfig, payload: payload, writeType: .withResponse)
+        let armed = f.step
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) { [weak self] in
+            guard let self, let cur = self.secondHrmFlow, cur.step == armed else { return }
+            self.send(.getDeviceConfigValue, payload: LiveSecondHrmRestore.readPayload())
+            self.armSecondHrmTimeout(step: armed)
+        }
+    }
+
+    /// The write's own COMMAND_RESPONSE — recorded for the log only, never the result.
+    private func handleSecondHrmWriteAck(_ frame: [UInt8], cmdOff: Int) {
+        guard secondHrmFlow != nil else { return }
+        let resultIndex = cmdOff + 2
+        secondHrmFlow?.writeAckCode = frame.count > resultIndex ? Int(frame[resultIndex]) : nil
+    }
+
+    /// Both the preflight read and the post-write read-back arrive here; the phase says which.
+    private func handleSecondHrmReadBack(_ frame: [UInt8], isWhoop5: Bool) {
+        guard let flow = secondHrmFlow else { return }
+        let family: DeviceFamily = isWhoop5 ? .whoop5 : .whoop4
+        var value: String?
+        switch DeviceConfigReadProbe.parse(frame: frame, family: family,
+                                           expecting: DeviceConfigWriteGate.getDeviceConfigValueCmd) {
+        case .success(let r): value = LiveSecondHrmRestore.readValue(r)
+        case .failure: value = nil
+        }
+        switch flow.phase {
+        case .preflightRead:
+            let key = PuffinExperiment.liveSecondHrmOriginalKey(strapId: flow.strapId)
+            let stored = UserDefaults.standard.string(forKey: key)
+            state.liveSecondHrmReadBack = value
+            guard let original = LiveSecondHrmRestore.originalToPersist(alreadyStored: stored, currentRead: value) else {
+                secondHrmFlow = nil
+                state.liveSecondHrmBusy = false
+                log("Second HRM: the current value could not be read (read-back=\(value ?? "none")), so there is nothing restorable; no write sent.")
+                return
+            }
+            UserDefaults.standard.set(original, forKey: key)
+            var f = flow
+            f.original = original
+            secondHrmFlow = f
+            sendSecondHrmWrite(valueByte: LiveSecondHrmRestore.enableValue, flow: f)
+        case .awaitingWriteReadBack:
+            finishSecondHrm(readBack: value, note: value == nil ? "reply carried no tri-state value for the key" : nil)
+        }
+    }
+
+    /// Close a run. The ONLY reported fact is the read-back value; the opt-in and the persisted original
+    /// are settled from it alone (`LiveSecondHrmRestore.settle`).
+    private func finishSecondHrm(readBack: String?, note: String?) {
+        guard let flow = secondHrmFlow else { return }
+        secondHrmFlow = nil
+        state.liveSecondHrmBusy = false
+        state.liveSecondHrmReadBack = readBack
+        let defaults = UserDefaults.standard
+        let originalKey = PuffinExperiment.liveSecondHrmOriginalKey(strapId: flow.strapId)
+        let key = DeviceConfigWriteGate.liveSecondHrmKey
+        // The preflight read never answered: nothing was written, so the opt-in and any stored original
+        // stay exactly as they were. Settling here would switch the opt-in on with no original to restore.
+        if flow.phase == .preflightRead {
+            log("Second HRM: the current \(key) value was not read (\(note ?? "no reply")); nothing was written.")
+            return
+        }
+        if flow.on {
+            // ON: if the strap still reads its original, the write changed nothing and nothing is owed.
+            // Otherwise (a new value, or nothing read) keep the opt-in on so the user can restore.
+            let unchanged = readBack != nil && readBack == flow.original
+            defaults.set(!unchanged, forKey: PuffinExperiment.liveSecondHrmKey)
+            if unchanged { defaults.removeObject(forKey: originalKey) }
+        } else {
+            let settled = LiveSecondHrmRestore.settle(original: flow.original, readBack: readBack)
+            defaults.set(settled.optInStaysOn, forKey: PuffinExperiment.liveSecondHrmKey)
+            if settled.discardOriginal { defaults.removeObject(forKey: originalKey) }
+        }
+        log("Second HRM: \(flow.on ? "opt-in" : "restore") \(key) requested='\(flow.requested)'; read-back value=\(readBack.map { "'\($0)'" } ?? "none")\(note.map { " (\($0))" } ?? ""); stored original='\(flow.original)'; write ack code=\(flow.writeAckCode.map(String.init) ?? "none") (not a result). Only the read-back value is claimed; the effect on receivers is unverified.")
+    }
+
+    private func abandonSecondHrmFlow(_ why: String) {
+        guard let flow = secondHrmFlow else { return }
+        secondHrmFlow = nil
+        state.liveSecondHrmBusy = false
+        log("Second HRM: run abandoned — \(why); the strap value is unknown (no read-back); \(flow.phase == .preflightRead ? "nothing was written" : "a write may have been sent"). Opt-in flag and stored original are unchanged.")
+    }
+
     // MARK: - ECG raw-data gate (#891) — an opt-in write with a MANDATORY read-back
 
     private static let ecgGateReadBackTimeout: TimeInterval = 8
@@ -3812,7 +4001,7 @@ public final class BLEManager: NSObject, ObservableObject {
             log("ECG gate (#891): needs the full encrypted bond, not the live-HR-only link — close the official WHOOP app and pair the strap to NOOP first. Ignored."); return
         }
         // Mutually exclusive with the Broadcast-HR gate (#1061): both verify over the same 121 read-back.
-        guard ecgGateReport == nil, broadcastHrGateReport == nil else {
+        guard ecgGateReport == nil, broadcastHrGateReport == nil, secondHrmFlow == nil else {
             log("ECG gate (#891): a device-config write is already being verified — ignored."); return
         }
 
@@ -6348,6 +6537,9 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
             broadcastHrGateReport?.noteReadBackTimeout(seconds: Int(BLEManager.ecgGateReadBackTimeout))
             finishBroadcastHrWrite()
         }
+        // A second-HRM opt-in flow interrupted by the link is closed with no claim about the strap: the
+        // opt-in flag and the persisted original are left exactly as they were, so a restore stays possible.
+        abandonSecondHrmFlow("the strap disconnected mid-run")
         state.clearBiometrics()       // and a stale HR / R-R must not outlive the link either
         state.liveFeedActive = false  // a drop while Live is open must not leave a stale "Stop live feed"
         // #1635: an unanswered CLIENT_HELLO produces no write error at all - the link simply drops a few
@@ -7662,9 +7854,11 @@ extension BLEManager: @preconcurrency CBPeripheralDelegate {
                         if frame[10] == WhoopCommand.setDeviceConfig.rawValue {
                             handleEcgGateWriteAck(frame, cmdOff: 10)
                             handleBroadcastHrGateWriteAck(frame, cmdOff: 10)
+                            handleSecondHrmWriteAck(frame, cmdOff: 10)
                         } else if frame[10] == WhoopCommand.getDeviceConfigValue.rawValue {
                             handleEcgGateReadBack(frame, isWhoop5: true)
                             handleBroadcastHrGateReadBack(frame, isWhoop5: true)
+                            handleSecondHrmReadBack(frame, isWhoop5: true)
                         }
                     }
                     // #695: a 5/MG GET_DATA_RANGE COMMAND_RESPONSE (puffin envelope: type @8, cmd @10). Feeds

@@ -418,6 +418,14 @@ public final class LiveState: ObservableObject {
     /// `clearEcgRawDataGate()`. Twin of the Android WhoopBleClient.ecgRawDataGate flow.
     @Published public var ecgRawDataGate: EcgRawDataGateReport? = nil
 
+    /// The last value a `GET_DEVICE_CONFIG_VALUE(121)` read-back reported for `whoop_live_2_hrm_devices`
+    /// (one ASCII digit), or nil when none has been read this session. Only ever a read-back, never the
+    /// write ack or the requested value.
+    @Published public var liveSecondHrmReadBack: String? = nil
+
+    /// True while the opt-in's preflight read, write or read-back is in flight (disables the control).
+    @Published public var liveSecondHrmBusy: Bool = false
+
     /// Wrist-wear state from WRIST_ON/WRIST_OFF events. Defaults true so wear-gated features work
     /// before the first event arrives; flipped by FrameRouter on a real event.
     @Published public var worn: Bool = true

@@ -53,6 +53,22 @@ enum PuffinExperiment {
 
     static var ecgRawDataEnabled: Bool { UserDefaults.standard.bool(forKey: ecgRawDataKey) }
 
+    /// Opt-in "second live-HR receiver": writes the tri-state device-config key `whoop_live_2_hrm_devices`
+    /// so the strap MAY serve live heart rate to two receivers. **The effect is unverified** (connection
+    /// capacity and factory state are unresolved in docs/PROTOCOL_CONFIGURATION.md). Default OFF, never
+    /// sent automatically, and driven only by `BLEManager.setLiveSecondHrm(_:)` after a confirmation.
+    ///
+    /// Unlike a plain switch this flag means "the opt-in write is in force and a restore is owed": it is
+    /// set just before the first write and cleared only once a read-back shows the strap at its ORIGINAL
+    /// value again, so the restore write is still admitted by the send gate while the user turns it off.
+    static let liveSecondHrmKey = "noopLiveSecondHrm"
+
+    static var liveSecondHrmEnabled: Bool { UserDefaults.standard.bool(forKey: liveSecondHrmKey) }
+
+    /// Per-strap UserDefaults key holding the value read BEFORE the first write (one ASCII digit), which is
+    /// the value the undo writes back. Per strap because the value is a property of one strap's config.
+    static func liveSecondHrmOriginalKey(strapId: String) -> String { "noopLiveSecondHrmOriginal.\(strapId)" }
+
     /// Opt-in "SpO₂ strap estimate" display (#103, extended to Oura by queue 11a): surfaces a nightly
     /// candidate SpO₂ mean in the Blood Oxygen tile/card, labelled "strap estimate (unverified)". The
     /// transform is device-conditional (`IntelligenceEngine`):
