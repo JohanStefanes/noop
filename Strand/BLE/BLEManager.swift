@@ -6006,6 +6006,7 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
     /// The #280/#295 "re-grant Bluetooth" banner, verbatim. One home so the immediate genuine-denial
     /// path and the #391 settle-deadline escalation can never drift apart.
     private func showBluetoothRegrantBanner() {
+        state.bluetoothRadio = .unauthorized
         // #295: an unsigned/ad-hoc build's code identity changes on every release, so a Bluetooth
         // toggle that already reads "on" from a PRIOR build's grant may not carry over — the
         // message needs to tell the user to re-toggle it, not just check that it's on.
@@ -6074,18 +6075,21 @@ extension BLEManager: @preconcurrency CBCentralManagerDelegate {
                     armUnauthorizedSettleDeadline()
                 }
             case .poweredOff:
+                state.bluetoothRadio = .poweredOff
                 state.lastSyncError = "Bluetooth is off. Turn it on to connect to your strap."
                 log("Bluetooth is off — cannot scan or connect")
                 radioStateErrorShown = true
             case .unsupported:
+                state.bluetoothRadio = .unsupported
                 state.lastSyncError = "This device can't use Bluetooth Low Energy."
                 log("Bluetooth LE unsupported on this device")
                 radioStateErrorShown = true
             default:
-                break
+                state.bluetoothRadio = .unknown
             }
             return
         }
+        state.bluetoothRadio = .poweredOn
         // #280: radio is back — clear a stale radio-state banner (only one WE set), so a "Bluetooth is off"
         // message doesn't outlive the radio coming on. A genuine sync error is left untouched.
         if radioStateErrorShown {

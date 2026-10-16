@@ -622,6 +622,12 @@ public final class LiveState: ObservableObject {
     /// Settings "Export" / "Reveal" actions target this URL.
     @Published public var puffinCaptureURL: URL?
 
+    /// The Bluetooth radio as CoreBluetooth last reported it, so a screen can say WHY nothing is found
+    /// (off, permission denied) instead of searching forever. Set only by `centralManagerDidUpdateState`
+    /// and the re-grant banner path in BLEManager; `.unauthorized` is published only once that path has
+    /// decided the denial is genuine (#391), never for the transient cold-start settle.
+    @Published public var bluetoothRadio: BluetoothRadio = .unknown
+
     /// Set when a WHOOP 5/MG strap refuses the encrypted bond on first connect ("Encryption/Authentication
     /// is insufficient") — CoreBluetooth won't start a fresh just-works bond against a strap still bonded to
     /// the official WHOOP app. Surfaced as actionable pairing-mode guidance; cleared once the link bonds.
@@ -1267,4 +1273,15 @@ public enum LiveConsoleReadout {
         if activeIsWhoop { return whoopPct.map { Int($0.rounded()) } }
         return ringPct
     }
+}
+
+/// Coarse Bluetooth radio state for the UI (`LiveState.bluetoothRadio`).
+public enum BluetoothRadio: Equatable, Sendable {
+    /// Not reported yet, resetting, or a cold-start `.unauthorized` that is still settling.
+    case unknown
+    case poweredOn
+    case poweredOff
+    /// Permission genuinely denied or restricted.
+    case unauthorized
+    case unsupported
 }
