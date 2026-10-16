@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UserNotifications
 
 /// "Mehr": keeps every original NOOP screen reachable from the JohanUI shell. The key screens are linked
 /// directly; the complete original shell (with its own More list) opens full-screen, and the switch below
@@ -16,6 +17,13 @@ struct JohanMoreView: View {
     @AppStorage(UnitPrefs.liveActivityKey) private var liveHREnabled = true
     @AppStorage(UnitPrefs.liftLiveActivityKey) private var liftActivityEnabled = true
     @AppStorage(UnitPrefs.syncLiveActivityKey) private var syncActivityEnabled = true
+    /// The alert switches below bind the SAME `BehaviorStore` fields as Automations, so the two screens cannot
+    /// disagree about whether an alert is on.
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var behavior: BehaviorStore
+    @Environment(\.scenePhase) private var scenePhase
+    /// iOS's own permission, re-read on appear and on return from the Settings app.
+    @State private var notificationStatus: UNAuthorizationStatus?
 
     private struct Row: Identifiable {
         let id: String
@@ -101,10 +109,15 @@ struct JohanMoreView: View {
                 }
                 Text("Turning it off brings back the original NOOP interface right away.")
                     .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                notificationsSection.padding(.top, 8)
                 liveActivitiesSection.padding(.top, 8)
                 languageSection.padding(.top, 8)
             }
             .tabRouteDestinations()
+        }
+        .task { await refreshNotificationStatus() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refreshNotificationStatus() } }
         }
         .fullScreenCover(isPresented: $showClassic) {
             ZStack(alignment: .topTrailing) {
@@ -117,6 +130,88 @@ struct JohanMoreView: View {
                 .accessibilityLabel("Close")
             }
         }
+    }
+
+    // MARK: Notifications
+
+    /// Only the alerts that ask for an action today: charge the strap, or take it easy. The once-a-day strain
+    /// nudge and the morning brief stay in Automations and Coach; they are not offered here.
+    @ViewBuilder
+    private var notificationsSection: some View {
+        JohanOverline(String(localized: "Notifications"))
+        JohanCard(padding: 0) {
+            VStack(spacing: 0) {
+                if notificationStatus == .notDetermined || notificationStatus == .denied {
+                    permissionRow
+                    rowDivider
+                }
+                alertToggle("Strap battery", "battery.25", tint: JohanTheme.recoveryYellow,
+                            detail: "When the strap runs low or nears the cutoff. Cleared once it charges.",
+                            isOn: $behavior.batteryAlerts)
+                rowDivider
+                alertToggle("Won't last the night", "moon.zzz.fill", tint: JohanTheme.sleepViolet,
+                            detail: "Before bed, if the battery won't cover tonight's sleep.",
+                            isOn: $behavior.batteryPredictiveAlerts)
+                    .disabled(!behavior.batteryAlerts)
+                rowDivider
+                alertToggle("Early illness signs", "cross.case.fill", tint: JohanTheme.recoveryRed,
+                            detail: "When two or more signals drift together. At most once a day; needs 14 days of history.",
+                            isOn: $behavior.illnessWatch)
+            }
+        }
+        .onChange(of: behavior.illnessWatch) { _, _ in model.reevaluateIllness() }
+    }
+
+    @ViewBuilder
+    private var permissionRow: some View {
+        let denied = notificationStatus == .denied
+        Button {
+            if denied {
+                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            } else {
+                Task { await requestNotificationPermission() }
+            }
+        } label: {
+            HStack(spacing: 14) {
+                iconTile("bell.badge.fill", tint: JohanTheme.recoveryRed)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(denied ? "Notifications are off for NOOP" : "Allow notifications")
+                        .font(.system(.body)).foregroundStyle(JohanTheme.textPrimary)
+                    Text(denied ? "Turn them on in iOS Settings, or the alerts below stay silent."
+                                : "The alerts below need iOS's permission before they can arrive.")
+                        .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: denied ? "arrow.up.forward.app" : "chevron.right")
+                    .font(.system(.footnote, weight: .semibold)).foregroundStyle(JohanTheme.textTertiary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10).frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(JohanRowStyle())
+    }
+
+    private func alertToggle(_ title: LocalizedStringKey, _ icon: String, tint: Color,
+                             detail: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
+        liveActivityToggle(title, icon, tint: tint, detail: detail, isOn: Binding(
+            get: { isOn.wrappedValue },
+            set: { on in
+                isOn.wrappedValue = on
+                // Switching an alert on is the moment to ask, not the first 3 a.m. crossing.
+                if on, notificationStatus == .notDetermined { Task { await requestNotificationPermission() } }
+            }))
+    }
+
+    private func requestNotificationPermission() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        await refreshNotificationStatus()
+    }
+
+    private func refreshNotificationStatus() async {
+        notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 
     // MARK: Live Activities
