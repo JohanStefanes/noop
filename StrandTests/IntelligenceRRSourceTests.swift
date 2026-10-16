@@ -268,7 +268,7 @@ final class IntelligenceRRSourceTests: XCTestCase {
         }
     }
 
-    func testNightlySlidingWindowSelectsOneTransportForTheWholeOlderWindow() async throws {
+    func testNightlyScoringKeepsStandardBeatsDespiteHistoryInAnotherHour() async throws {
         try await withPreferences {
             let store = try await WhoopStore.inMemory()
             let registry = DeviceRegistryStore(dbQueue: store.registryWriter)
@@ -276,8 +276,9 @@ final class IntelligenceRRSourceTests: XCTestCase {
             let input = night()
             let standard = input.rr.map { RRInterval(ts: $0.ts, rrMs: $0.rrMs, srcChannel: .whoop5Standard) }
             _ = try await store.insert(Streams(hr: input.hr, rr: standard), deviceId: canonical)
-            // Today's read begins 30h before midnight. Only the older day's extension sees history;
-            // that single history record must select history for its ENTIRE window, including overlap.
+            // Today's read begins 30h before midnight, so the older day's window holds one history
+            // record hours before the sleep. The transport is chosen per UTC hour, so that record keeps
+            // its own hour and the night still scores on its standard-BLE beats.
             let midnight = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
             _ = try await store.insert(Streams(rr: [RRInterval(ts: midnight - 31 * 3_600,
                 rrMs: 900, srcChannel: .whoop5Historical)]), deviceId: canonical)
@@ -289,7 +290,7 @@ final class IntelligenceRRSourceTests: XCTestCase {
             let scored = try XCTUnwrap(rows.first)
             XCTAssertGreaterThan(scored.totalSleepMin ?? 0, 0)
             XCTAssertNotNil(scored.restingHr)
-            XCTAssertNil(scored.avgHrv, "the history-only window has no beats inside the sleep; cached standard beats must not leak in")
+            XCTAssertNotNil(scored.avgHrv, "one history record in another hour must not discard the night's standard beats")
         }
     }
 

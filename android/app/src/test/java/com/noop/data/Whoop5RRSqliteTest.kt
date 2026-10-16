@@ -501,7 +501,7 @@ class Whoop5RRSqliteTest {
         assertNotEquals("confirmed WHOOP 4 still stages from the same R-R", baseline, restage())
     }
 
-    @Test fun actualNightlySlidingWindowDoesNotSpliceStandardIntoHistoricalSource() = runBlocking {
+    @Test fun actualNightlyScoringKeepsStandardBeatsDespiteHistoryInAnotherHour() = runBlocking {
         registry("WHOOP")
         registry("5.0 MG", owner = "new-five")
         activate("new-five")
@@ -528,7 +528,7 @@ class Whoop5RRSqliteTest {
             .single { it.day == AnalyticsEngine.dayString(end, offset) }
         assertEquals(60.0, scored.sleepMin!!, 0.001)
         assertEquals(60, scored.rhr)
-        assertNull("the older history-only window cannot reuse standard beats from its overlap", scored.hrv)
+        assertNotNull("one history record hours earlier no longer discards the night's standard beats", scored.hrv)
     }
 
     @Test fun rawCsvPreservesMixedTransportsWhileScoringSelectsHistory() = runBlocking {
@@ -552,15 +552,32 @@ class Whoop5RRSqliteTest {
         assertEquals(listOf(800, 700), repo.rawRrIntervalsForDevice(id, 102, 104, 2).map { it.rrMs })
     }
 
-    @Test fun sourceSelectionPrecedesLimitAndSharesBoundsAndQuarantine() = runBlocking {
-        repo.insert(StreamBatch(rr = (100L until 200L).map { RrRow(it, 1000, RrSourceChannel.WHOOP5_STANDARD) }
-            + RrRow(200, 900, RrSourceChannel.WHOOP5_HISTORICAL)
-            + RrRow(201, 800, RrSourceChannel.WHOOP5_REALTIME)), id)
-        assertEquals(listOf(900), read(limit = 1).map { it.rrMs })
-        assertEquals(listOf(1000), read(to = 199, limit = 1).map { it.rrMs })
-        sql("UPDATE rrInterval SET tsSuspect = 1 WHERE ts = 200")
-        assertEquals(listOf(1000), read(limit = 1).map { it.rrMs })
-        assertTrue(read(from = 201).isEmpty())
+    /** Same assertions as the Swift `testSourceSelectionIsPerHourFullerFirstAndPrecedesLimit`. */
+    @Test fun sourceSelectionIsPerHourFullerFirstAndPrecedesLimit() = runBlocking {
+        val h = RrSourceChannel.WHOOP5_HISTORICAL
+        val s = RrSourceChannel.WHOOP5_STANDARD
+        repo.insert(StreamBatch(rr = (100L until 200L).map { RrRow(it, 1000, s) }
+            + RrRow(200, 900, h)
+            + RrRow(201, 800, RrSourceChannel.WHOOP5_REALTIME)
+            + (0L until 3L).map { RrRow(3_600 + it, 910, h) }
+            + (0L until 3L).map { RrRow(3_700 + it, 1010, s) }
+            + (0L until 2L).map { RrRow(7_200 + it, 920, h) }
+            + RrRow(7_300, 1020, s)), id)
+        val all = read(to = 10_000, limit = 1_000)
+        val hour0 = all.filter { it.ts < 3_600 }
+        assertEquals("the fuller standard stream keeps its hour", 100, hour0.size)
+        assertEquals(setOf(s.code), hour0.map { it.srcChannel }.toSet())
+        assertEquals("a tie keeps history", listOf(910, 910, 910),
+            all.filter { it.ts in 3_600 until 7_200 }.map { it.rrMs })
+        assertEquals(listOf(920, 920), all.filter { it.ts >= 7_200 }.map { it.rrMs })
+        assertEquals("the source is chosen before LIMIT", listOf(910),
+            read(from = 3_600, to = 10_000, limit = 1).map { it.rrMs })
+        assertTrue("the whole hour decides, not the part inside the window",
+            read(from = 3_700, to = 3_702).isEmpty())
+        sql("UPDATE rrInterval SET tsSuspect = 1 WHERE ts IN (7200, 7201)")
+        assertEquals("suspect history cannot win its hour", listOf(1020),
+            read(from = 7_200, to = 10_000).map { it.rrMs })
+        assertTrue("native realtime is diagnostic, not a scoring source", read(from = 201, to = 201).isEmpty())
     }
 
     @Test fun zeroInsertPromotionRestoresOrderAndInvalidatesBothCaches() = runBlocking {

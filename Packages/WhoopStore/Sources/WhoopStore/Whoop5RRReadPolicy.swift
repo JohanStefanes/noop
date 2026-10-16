@@ -17,8 +17,8 @@ extension WhoopStore {
     }
     /// The transports a WHOOP 5 window may be SCORED through, as a SQL list.
     ///
-    /// One constant rather than a literal per query. `rrIntervals` pins a window to the lowest of these
-    /// present, and `firstScorableWhoop5RRTimestamp` reports when the first of them was banked, so the
+    /// One constant rather than a literal per query. `rrIntervals` keeps, per UTC hour, whichever of
+    /// these holds more beats (history on a tie), and `firstScorableWhoop5RRTimestamp` reports when the first of them was banked, so the
     /// day the app tells a wearer its scoring begins is derived from the same set the scoring uses. Two
     /// literals would let those drift apart silently, and the drift would show as an explanation that
     /// names the wrong date. Type-40 live (6) is deliberately absent: it is a labelling channel that

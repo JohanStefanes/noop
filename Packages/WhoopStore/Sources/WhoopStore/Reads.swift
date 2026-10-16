@@ -420,7 +420,8 @@ extension WhoopStore {
     /// second's beats sorted by VALUE, which makes successive beats similar by construction and biases
     /// RMSSD — all successive differences — downward. Pre-v30 rows have `ord` NULL and SQLite sorts NULL
     /// first in ASC, so an all-NULL second ties and falls through to the old (rrMs, seq) order unchanged.
-    /// WHOOP 5 reads one verified transport; its unlabelled legacy rows remain stored but unscored.
+    /// WHOOP 5 reads one verified transport per UTC hour, the fuller one; its unlabelled legacy rows
+    /// remain stored but unscored.
     /// Kotlin's repository routes to equivalent SQLite queries, including the same NULL ordering.
     ///
     /// ONE optical channel (#1071). An Oura ring measures the same heartbeats on more than one tag, and
@@ -473,9 +474,13 @@ extension WhoopStore {
         try syncRead { db in
             let strictWhoop5 = try Self.isWhoop5RRSource(db: db, deviceId: deviceId,
                 unlabelledAliasOfWhoop5: unlabelledAliasOfWhoop5)
-            // One transport for the complete requested interval. Legacy WHOOP 5 rows mix units and
-            // origins, so they remain stored but cannot be converted or spliced into a scored beat train.
-            // This subquery uses the SAME time/suspect predicates as the outer read, before LIMIT.
+            // One WHOOP 5 transport per UTC hour, the fuller one, history on a tie. A single choice for
+            // the whole window let one stray history record outvote a night of standard-BLE beats, so
+            // the night scored on the history alone and lost HRV, respiratory rate and recovery. Each
+            // hour is counted over the WHOLE hour (as the WHOOP 4 choice below), so the choice does not
+            // depend on where a window starts. Two transports are never merged inside an hour, since
+            // they carry the same beats twice. Legacy WHOOP 5 rows mix units and origins, so they remain
+            // stored but are never scored.
             // A WHOOP 4 has labelled type-47 history, type-40 realtime, standard-BLE, and legacy
             // unlabelled rows. Choose one source per UTC hour in provenance order, so overlapping live
             // transports are never merged and partial history takes precedence only where it exists.
@@ -491,11 +496,6 @@ extension WhoopStore {
                         arguments: [deviceId, RRSourceChannel.whoop4Historical.rawValue]) ?? false
                 }
             }
-            let whoop5SourcePredicate = """
-                srcChannel = (SELECT MIN(srcChannel) FROM rrInterval
-                    WHERE deviceId = :d AND ts >= :f AND ts <= :t AND srcChannel IN \(Self.scorableWhoop5Channels)
-                    AND (tsSuspect IS NULL OR tsSuspect <> 1))
-                """
             // The WHOOP 4 source decision is per UTC hour. Materialize one choice per hour, then join
             // that small result to the requested beats. Counting the same hour from every beat made
             // wide HRV reads quadratic in the number of rows per hour and could stall metric screens.
@@ -530,12 +530,24 @@ extension WhoopStore {
                     """
             } else if strictWhoop5 {
                 sql = """
-                    SELECT ts, rrMs, srcChannel, ord, seq FROM rrInterval
-                    WHERE deviceId = :d AND ts >= :f AND ts <= :t
-                    AND (srcChannel IS NULL OR srcChannel <> :rrx)
-                    AND \(whoop5SourcePredicate)
-                    AND (tsSuspect IS NULL OR tsSuspect <> 1)   -- exclude future-stamped (#1073) and 500 ms fill (#2371) beats
-                    ORDER BY ts ASC, ord ASC, rrMs ASC, seq ASC LIMIT :lim
+                    WITH whoop5HourChoice AS MATERIALIZED (
+                        SELECT ts / 3600 AS hour,
+                               CASE WHEN SUM(srcChannel = :whoop5Historical) >= SUM(srcChannel = :whoop5Standard)
+                                    THEN :whoop5Historical ELSE :whoop5Standard END AS keepChannel
+                        FROM rrInterval
+                        WHERE deviceId = :d
+                          AND ts >= (:f / 3600) * 3600
+                          AND ts < ((:t / 3600) + 1) * 3600
+                          AND srcChannel IN \(Self.scorableWhoop5Channels)
+                          AND (tsSuspect IS NULL OR tsSuspect <> 1)
+                        GROUP BY ts / 3600
+                    )
+                    SELECT r.ts, r.rrMs, r.srcChannel, r.ord, r.seq FROM rrInterval r
+                    JOIN whoop5HourChoice h ON h.hour = r.ts / 3600
+                    WHERE r.deviceId = :d AND r.ts >= :f AND r.ts <= :t
+                      AND r.srcChannel = h.keepChannel
+                      AND (r.tsSuspect IS NULL OR r.tsSuspect <> 1)   -- exclude future-stamped (#1073) and 500 ms fill (#2371) beats
+                    ORDER BY r.ts ASC, r.ord ASC, r.rrMs ASC, r.seq ASC LIMIT :lim
                     """
             } else {
                 // One Oura channel per UTC hour, counted inside the requested window. LEFT JOIN: only
@@ -566,6 +578,8 @@ extension WhoopStore {
                                                     "whoop4Historical": RRSourceChannel.whoop4Historical.rawValue,
                                                     "whoop4Realtime": RRSourceChannel.whoop4Realtime.rawValue,
                                                     "whoop4Standard": RRSourceChannel.whoop4Standard.rawValue,
+                                                    "whoop5Historical": RRSourceChannel.whoop5Historical.rawValue,
+                                                    "whoop5Standard": RRSourceChannel.whoop5Standard.rawValue,
                                                     "lim": limit])
                 .map { row in
                     RRInterval(ts: row["ts"], rrMs: row["rrMs"],

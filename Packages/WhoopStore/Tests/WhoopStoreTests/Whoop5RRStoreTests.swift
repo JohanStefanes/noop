@@ -165,22 +165,39 @@ final class Whoop5RRStoreTests: XCTestCase {
         XCTAssertFalse(otherBrand)
     }
 
-    func testSourceSelectionPrecedesLimitAndSharesBoundsAndQuarantine() async throws {
+    /// One transport per UTC hour, the fuller one, history on a tie. A stray history beat no longer
+    /// discards a whole hour of standard-BLE beats. The choice counts the whole hour, precedes LIMIT,
+    /// ignores quarantined beats, and never scores native realtime. Same assertions as the Kotlin
+    /// `sourceSelectionIsPerHourFullerFirstAndPrecedesLimit`.
+    func testSourceSelectionIsPerHourFullerFirstAndPrecedesLimit() async throws {
         let s = try await WhoopStore.inMemory()
         try registry(s, model: "5.0 MG")
-        let rows = (100..<200).map { RRInterval(ts: $0, rrMs: 1000, srcChannel: .whoop5Standard) }
-            + [RRInterval(ts: 200, rrMs: 900, srcChannel: .whoop5Historical),
-               RRInterval(ts: 201, rrMs: 800, srcChannel: .whoop5Realtime)]
+        var rows = (100..<200).map { RRInterval(ts: $0, rrMs: 1000, srcChannel: .whoop5Standard) }
+        rows += [RRInterval(ts: 200, rrMs: 900, srcChannel: .whoop5Historical),
+                 RRInterval(ts: 201, rrMs: 800, srcChannel: .whoop5Realtime)]
+        rows += (0..<3).map { RRInterval(ts: 3_600 + $0, rrMs: 910, srcChannel: .whoop5Historical) }
+        rows += (0..<3).map { RRInterval(ts: 3_700 + $0, rrMs: 1010, srcChannel: .whoop5Standard) }
+        rows += (0..<2).map { RRInterval(ts: 7_200 + $0, rrMs: 920, srcChannel: .whoop5Historical) }
+        rows += [RRInterval(ts: 7_300, rrMs: 1020, srcChannel: .whoop5Standard)]
         _ = try await s.insert(Streams(rr: rows), deviceId: id)
-        var selected = try await read(s, limit: 1)
-        XCTAssertEqual(selected.map(\.rrMs), [900], "historical source must be chosen before LIMIT")
-        selected = try await read(s, to: 199, limit: 1)
-        XCTAssertEqual(selected.map(\.rrMs), [1000], "history outside this interval cannot select its source")
-        try await s.registryWriter.write { db in try db.execute(sql: "UPDATE rrInterval SET tsSuspect = 1 WHERE ts = 200") }
-        selected = try await read(s, limit: 1)
-        XCTAssertEqual(selected.map(\.rrMs), [1000], "suspect-only history cannot suppress the valid fallback")
-        selected = try await read(s, from: 201)
-        XCTAssertTrue(selected.isEmpty, "native realtime is diagnostic, not the durable scoring fallback")
+        let all = try await read(s, to: 10_000, limit: 1_000)
+        let hour0 = all.filter { $0.ts < 3_600 }
+        XCTAssertEqual(hour0.count, 100, "the fuller standard stream keeps its hour")
+        XCTAssertEqual(Set(hour0.map(\.srcChannel)), [.whoop5Standard])
+        XCTAssertEqual(all.filter { (3_600..<7_200).contains($0.ts) }.map(\.rrMs), [910, 910, 910],
+                       "a tie keeps history")
+        XCTAssertEqual(all.filter { $0.ts >= 7_200 }.map(\.rrMs), [920, 920])
+        let limited = try await read(s, from: 3_600, to: 10_000, limit: 1)
+        XCTAssertEqual(limited.map(\.rrMs), [910], "the source is chosen before LIMIT")
+        let midHour = try await read(s, from: 3_700, to: 3_702)
+        XCTAssertTrue(midHour.isEmpty, "the whole hour decides, not the part inside the window")
+        try await s.registryWriter.write { db in
+            try db.execute(sql: "UPDATE rrInterval SET tsSuspect = 1 WHERE ts IN (7200, 7201)")
+        }
+        let quarantined = try await read(s, from: 7_200, to: 10_000)
+        XCTAssertEqual(quarantined.map(\.rrMs), [1020], "suspect history cannot win its hour")
+        let realtime = try await read(s, from: 201, to: 201)
+        XCTAssertTrue(realtime.isEmpty, "native realtime is diagnostic, not a scoring source")
     }
 
     func testZeroInsertPromotionRestoresHistoricalOrderAndInvalidatesBothCaches() async throws {

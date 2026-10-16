@@ -237,17 +237,26 @@ def analyse(con, device: str, health: Health, nights: int, gap_min: float, pair_
                          (device, int(a), int(b))).fetchall()
         rr_all = con.execute("SELECT COUNT(*) FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ?",
                              (device, int(a), int(b))).fetchone()[0]
-        # Like WhoopStore.rrIntervals: ONE scorable transport for the whole window (the lowest of 5/7
-        # present), never both, since history and standard BLE carry the same beats twice.
-        scorable = not_suspect
+        # Like WhoopStore.rrIntervals: ONE scorable transport per UTC hour, the one with more beats over
+        # the whole hour (history 5 on a tie), never both, since history and standard BLE carry the same
+        # beats twice.
+        order = 'ord' if 'ord' in rr_cols else 'seq'
         if "srcChannel" in rr_cols:
-            chan = con.execute(f"SELECT MIN(srcChannel) FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
-                               f"AND srcChannel IN {SCORABLE_WHOOP5_CHANNELS} AND {not_suspect}",
-                               (device, int(a), int(b))).fetchone()[0]
-            scorable += f" AND srcChannel = {int(chan) if chan is not None else -1}"
-        rr = con.execute(f"SELECT ts, rrMs FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
-                         f"AND {scorable} ORDER BY ts, {'ord' if 'ord' in rr_cols else 'seq'}",
-                         (device, int(a), int(b))).fetchall()
+            lo, hi = (int(a) // 3600) * 3600, (int(b) // 3600 + 1) * 3600
+            counts = {}
+            for hour, chan, cnt in con.execute(
+                    f"SELECT ts / 3600, srcChannel, COUNT(*) FROM rrInterval WHERE deviceId = ? AND ts >= ? "
+                    f"AND ts < ? AND srcChannel IN {SCORABLE_WHOOP5_CHANNELS} AND {not_suspect} "
+                    f"GROUP BY ts / 3600, srcChannel", (device, lo, hi)):
+                counts.setdefault(hour, {})[chan] = cnt
+            keep = {h: 5 if c.get(5, 0) >= c.get(7, 0) else 7 for h, c in counts.items()}
+            rr = [(t, ms) for t, ms, chan in con.execute(
+                f"SELECT ts, rrMs, srcChannel FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
+                f"AND srcChannel IN {SCORABLE_WHOOP5_CHANNELS} AND {not_suspect} ORDER BY ts, {order}",
+                (device, int(a), int(b))) if keep.get(t // 3600) == chan]
+        else:
+            rr = con.execute(f"SELECT ts, rrMs FROM rrInterval WHERE deviceId = ? AND ts >= ? AND ts < ? "
+                             f"AND {not_suspect} ORDER BY ts, {order}", (device, int(a), int(b))).fetchall()
         hr_ts = [r[0] for r in hr]
         minutes = (b - a) / 60
         covered = len({t // 60 for t in hr_ts})

@@ -133,22 +133,36 @@ internal const val RAW_RR_INTERVALS_SQL =
 
 /** The transports a WHOOP 5 window may be SCORED through, as a SQL list.
  *
- *  One constant rather than a literal per query. [WHOOP5_RR_INTERVALS_SQL] pins a window to the lowest
- *  of these present, and [FIRST_SCORABLE_WHOOP5_RR_SQL] reports when the first of them was banked, so
+ *  One constant rather than a literal per query. [WHOOP5_RR_INTERVALS_SQL] keeps, per UTC hour,
+ *  whichever of these holds more beats (history on a tie), and [FIRST_SCORABLE_WHOOP5_RR_SQL] reports when the first of them was banked, so
  *  the day the app tells a wearer its scoring begins is derived from the same set the scoring uses. Two
  *  literals would let those drift apart silently, and the drift would show as an explanation that names
  *  the wrong date. Type-40 live (6) is deliberately absent: it is a labelling channel that standard BLE
  *  (7) already covers beat for beat. Twin of Swift `WhoopStore.scorableWhoop5Channels`. */
 internal const val SCORABLE_WHOOP5_CHANNELS = "(5, 7)"
 
+/**
+ * One WHOOP 5 transport per UTC hour, the fuller one, history (5) on a tie over standard BLE (7). A
+ * single choice for the whole window let one stray history record outvote a night of standard-BLE
+ * beats, so the night scored on the history alone and lost HRV, respiratory rate and recovery. Each hour
+ * is counted over the WHOLE hour, as [WHOOP4_RR_INTERVALS_SQL] does, so the choice does not depend on
+ * where a window starts; two transports are never merged inside an hour. Twin of the strict-WHOOP-5
+ * branch of Swift `WhoopStore.rrIntervals`. Not `AS MATERIALIZED`, for the minSdk reason on
+ * [WHOOP4_RR_INTERVALS_SQL].
+ */
 internal const val WHOOP5_RR_INTERVALS_SQL =
-    "SELECT * FROM rrInterval WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
-    "AND (tsSuspect IS NULL OR tsSuspect <> 1) " +
-    "AND srcChannel = (SELECT MIN(srcChannel) FROM rrInterval " +
-    "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to AND srcChannel IN " +
-    SCORABLE_WHOOP5_CHANNELS + " " +
-    "AND (tsSuspect IS NULL OR tsSuspect <> 1)) " +
-    "ORDER BY ts ASC, ord ASC, rrMs ASC, seq ASC LIMIT :limit"
+    "WITH whoop5HourChoice AS (" +
+    "SELECT ts / 3600 AS hour, " +
+    "CASE WHEN SUM(srcChannel = 5) >= SUM(srcChannel = 7) THEN 5 ELSE 7 END AS keepChannel " +
+    "FROM rrInterval WHERE deviceId = :deviceId " +
+    "AND ts >= (:from / 3600) * 3600 AND ts < ((:to / 3600) + 1) * 3600 " +
+    "AND srcChannel IN " + SCORABLE_WHOOP5_CHANNELS + " " +
+    "AND (tsSuspect IS NULL OR tsSuspect <> 1) GROUP BY ts / 3600) " +
+    "SELECT r.* FROM rrInterval r JOIN whoop5HourChoice h ON h.hour = r.ts / 3600 " +
+    "WHERE r.deviceId = :deviceId AND r.ts >= :from AND r.ts <= :to " +
+    "AND r.srcChannel = h.keepChannel " +
+    "AND (r.tsSuspect IS NULL OR r.tsSuspect <> 1) " +
+    "ORDER BY r.ts ASC, r.ord ASC, r.rrMs ASC, r.seq ASC LIMIT :limit"
 
 /**
  * One R-R source per UTC hour for a WHOOP 4, in provenance order: type-47 history, then type-40
