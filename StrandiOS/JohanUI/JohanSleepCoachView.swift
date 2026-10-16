@@ -12,7 +12,9 @@ struct JohanSleepCoachView: View {
     @EnvironmentObject private var repo: Repository
     @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var live: LiveState
     @StateObject private var coach = JohanSleepCoachModel()
+    @AppStorage(PuffinExperiment.keepRealtimeForDataKey) private var continuousHrv = false
     @State private var showsPhases = false
     /// The moment marked on the stage chart, in seconds after onset; a phase row sets it too.
     @State private var selectedTime: TimeInterval?
@@ -153,6 +155,7 @@ struct JohanSleepCoachView: View {
             summaryCard(sleep).johanStagger(0)
             stagesCard(sleep).johanStagger(1)
             heartRateCard(sleep).johanStagger(2)
+            coverageCard.johanStagger(2)
         } else {
             sectionTitle(String(localized: "Last night"))
             JohanCard {
@@ -227,6 +230,100 @@ struct JohanSleepCoachView: View {
     /// Woken from today, so "Last night" is true; an older newest night is named by its own date instead.
     private func isRecent(_ night: Night) -> Bool {
         Calendar.current.isDateInToday(Date(timeIntervalSince1970: TimeInterval(night.session.endTs)))
+    }
+
+    // MARK: Night recording
+
+    /// How much of the night carries beat-to-beat data, where it is missing, and the two settings states
+    /// that most often leave it thin: overnight capture switched off, another app pulling the strap.
+    @ViewBuilder
+    private var coverageCard: some View {
+        if let c = coach.coverage, c.nightMinutes > 0 {
+            JohanCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    cardHeader(String(localized: "Night recording"),
+                               String(localized: "How much of the night has beat-to-beat heart data. HRV, breathing rate and recovery are computed from it."))
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(hm(Double(c.beatMinutes))).johanNumberFont(28)
+                            .foregroundStyle(coverageColor(c.fraction))
+                        Text(String(localized: "of \(hm(Double(c.nightMinutes)))"))
+                            .font(JohanTheme.Fonts.unit).foregroundStyle(JohanTheme.textSecondary)
+                        Spacer()
+                        Text(String(Int((c.fraction * 100).rounded())) + " %")
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                    }
+                    coverageStrip(c)
+                        .frame(height: 10)
+                        .accessibilityHidden(true)
+                    if !c.gaps.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(Array(c.gaps.prefix(3).enumerated()), id: \.offset) { _, gap in
+                                Text(String(localized: "No beats \(timeText(Date(timeIntervalSince1970: TimeInterval(gap.start))))–\(timeText(Date(timeIntervalSince1970: TimeInterval(gap.end)))) (\(hm(Double(gap.minutes))))"))
+                            }
+                            if c.gaps.count > 3 {
+                                Text(String(localized: "and \(String(c.gaps.count - 3)) more gaps"))
+                            }
+                        }
+                        .font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
+                    }
+                    if let share = c.liveShare {
+                        Text(String(localized: "Live stream: \(String(Int((share * 100).rounded())) + " %") of the beats, the rest from the strap's history."))
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if live.pairingHint != nil || live.deepPacketsThisSession > 0 {
+                        coverageNote(icon: "exclamationmark.triangle.fill", color: JohanTheme.recoveryYellow,
+                                     String(localized: "Another app is reading this strap, most likely the official WHOOP app. While it holds the strap, NOOP misses live beats and some features stop working. Close it or remove the strap there."))
+                    }
+                    if !continuousHrv {
+                        coverageNote(icon: "moon.zzz.fill", color: JohanTheme.sleepViolet,
+                                     String(localized: "Overnight recording is off, so only the strap's history is used at night."))
+                        Button {
+                            UserDefaults.standard.set(true, forKey: PuffinExperiment.continuousHrvOvernightOnlyKey)
+                            continuousHrv = true
+                            model.ble.setKeepRealtimeForData(true)
+                        } label: {
+                            Text("Turn on overnight recording")
+                                .font(.system(.subheadline, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(JohanTheme.sleepViolet.opacity(0.2), in: Capsule())
+                                .foregroundStyle(JohanTheme.sleepViolet)
+                        }
+                        .buttonStyle(JohanPressStyle())
+                        .accessibilityHint(Text("Keeps the beat-to-beat stream running inside your night window. Uses more battery."))
+                    }
+                }
+            }
+        }
+    }
+
+    private func coverageColor(_ fraction: Double) -> Color {
+        fraction >= 0.8 ? JohanTheme.recoveryGreen : fraction >= 0.5 ? JohanTheme.recoveryYellow : JohanTheme.recoveryRed
+    }
+
+    /// The night as one bar: recorded stretches filled, everything else the bare track.
+    private func coverageStrip(_ c: JohanNightCoverage.Summary) -> some View {
+        GeometryReader { geo in
+            let perMinute = geo.size.width / CGFloat(max(1, c.nightMinutes))
+            ZStack(alignment: .leading) {
+                Capsule().fill(JohanTheme.track)
+                ForEach(Array(c.covered.enumerated()), id: \.offset) { _, span in
+                    Rectangle().fill(JohanTheme.sleepViolet)
+                        .frame(width: max(1, perMinute * CGFloat(span.minutes)))
+                        .offset(x: perMinute * CGFloat((span.start - c.nightStart) / 60))
+                }
+            }
+            .clipShape(Capsule())
+        }
+    }
+
+    private func coverageNote(icon: String, color: Color, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundStyle(color).accessibilityHidden(true)
+            Text(text).font(.system(.footnote)).foregroundStyle(JohanTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: Night heart rate

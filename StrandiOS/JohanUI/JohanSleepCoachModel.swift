@@ -3,6 +3,7 @@ import Foundation
 import StrandAnalytics
 import StrandDesign
 import WhoopStore
+import WhoopProtocol
 
 /// Read model behind "Schlaf-Coach". Sleep need, debt and the night itself come from the owners the
 /// Sleep tab already uses: `SleepModel.debtNeedMin` (personalised, age-floored need), `SleepDebt`
@@ -37,6 +38,9 @@ final class JohanSleepCoachModel: ObservableObject {
     @Published private(set) var sleep: SleepModel?
     /// One-minute heart-rate buckets across `sleep.night`, the same load the Sleep tab's HR chart uses.
     @Published private(set) var nightHR: [HRBucket] = []
+    /// How much of `sleep.night` carries beat-to-beat data, from the same scored R-R read the night's HRV
+    /// uses; nil without a night.
+    @Published private(set) var coverage: JohanNightCoverage.Summary?
     @Published private(set) var loaded = false
 
     /// Most extra sleep the coach asks for on top of the need, whatever the debt (a sane nightly cap).
@@ -78,14 +82,34 @@ final class JohanSleepCoachModel: ObservableObject {
             habitualMidsleepSec: await repo.habitualMidsleepSec(),
             motionByStart: await repo.sessionMotions(sessions: sessions)))
         var hr: [HRBucket] = []
+        var nightCoverage: JohanNightCoverage.Summary?
         if let model, !model.isStubNight {
             hr = await repo.hrBuckets(from: model.night.session.startTs, to: model.night.session.endTs,
                                       bucketSeconds: 60)
+            let start = model.night.session.effectiveStartTs
+            let end = model.night.session.endTs
+            let beats = await repo.rrIntervals(from: start, to: end, limit: 200_000)
+            let samples = await repo.hrSamples(from: start, to: end, limit: 80_000)
+            nightCoverage = await Task.detached(priority: .userInitiated) {
+                JohanNightCoverage.summarize(
+                    start: start, end: end, beatTimestamps: beats.map(\.ts),
+                    liveBeats: beats.filter { Self.isLive($0.srcChannel) }.count,
+                    heartRateTimestamps: samples.map(\.ts))
+            }.value
         }
         // Published together so the chart never pairs one night's trace with another night's stages.
         sleep = model
         nightHR = hr
+        coverage = nightCoverage
         loaded = true
+    }
+
+    /// Beats that came over the live Bluetooth stream rather than the strap's banked history.
+    nonisolated static func isLive(_ channel: RRSourceChannel?) -> Bool {
+        switch channel {
+        case .whoop5Standard?, .whoop4Realtime?, .whoop4Standard?: return true
+        default: return false
+        }
     }
 
     /// Body-clock sleep window for `durationMin`, from the engine's own estimate. nil while the rhythm is
