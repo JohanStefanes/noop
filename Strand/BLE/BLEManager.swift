@@ -495,12 +495,31 @@ struct BackfillContinuation {
 /// RE-DERIVES it at every arm site (reconcile / keep-alive tick / post-bond arm) instead of caching it,
 /// so a reconnect outside the window can never re-arm the flood from a stale precomputed want.
 struct ContinuousHrvSchedule {
-    /// The reused quiet-hours window keys (written by NotificationSettingsStore; the same reuse idiom as
-    /// InactivityPrefs.NotifK) and their defaults (22:00 / 07:00).
+    /// The notification quiet-hours keys (written by NotificationSettingsStore) and their defaults
+    /// (22:00 / 07:00), which the capture window borrowed until it got its own (`nightWindow`).
     static let quietStartKey = "notif.quietStartMinutes"
     static let quietEndKey = "notif.quietEndMinutes"
     static let defaultStartMinutes = 22 * 60
     static let defaultEndMinutes = 7 * 60
+
+    /// The R-R capture's OWN night window, separate from the notification quiet hours it used to borrow:
+    /// sleep that starts before 22:00 or runs past 07:00 fell outside quiet hours and lost its beat-to-beat
+    /// R-R. Defaults to 21:00 → 09:00, editable under Continuous HRV capture. Same minutes-since-local-
+    /// midnight, wrap-aware convention as quiet hours.
+    static let nightStartKey = "noopContinuousHrvNightStartMinutes"
+    static let nightEndKey = "noopContinuousHrvNightEndMinutes"
+    static let nightDefaultStartMinutes = 21 * 60
+    static let nightDefaultEndMinutes = 9 * 60
+
+    /// The night window in effect: the stored choice, or the defaults. A stored value outside a day's
+    /// minutes is ignored rather than trusted.
+    static func nightWindow(defaults: UserDefaults = .standard) -> (start: Int, end: Int) {
+        func read(_ key: String, _ fallback: Int) -> Int {
+            guard let v = defaults.object(forKey: key) as? Int, (0..<1440).contains(v) else { return fallback }
+            return v
+        }
+        return (read(nightStartKey, nightDefaultStartMinutes), read(nightEndKey, nightDefaultEndMinutes))
+    }
 
     /// Wrap-aware membership: is `minuteOfDay` inside `[startMin, endMin)`, where the window may cross
     /// midnight? Byte-for-byte the quiet-hours semantics (SedentaryDetector.windowContains / the Android
@@ -3370,8 +3389,8 @@ public final class BLEManager: NSObject, ObservableObject {
 
     /// #927: the continuous-capture side of the realtime want, window-gated. True while the "Continuous
     /// HRV capture" preference wants the stream held open AND, when "overnight only" is on, the local
-    /// wall clock sits inside the nightly window (the reused quiet-hours window, 22:00 → 07:00 by
-    /// default). RE-DERIVED at every arm site (reconcile / keep-alive tick / post-bond arm) instead of
+    /// wall clock sits inside the capture's own night window (`ContinuousHrvSchedule.nightWindow`,
+    /// 21:00 → 09:00 by default). RE-DERIVED at every arm site (reconcile / keep-alive tick / post-bond arm) instead of
     /// precomputed, so a reconnect outside the window can never arm the flood from a stale value.
     /// Mirrors the Android `continuousCaptureWantsNow`.
     private func continuousCaptureWantsNow(now: Date = Date()) -> Bool {
@@ -3389,13 +3408,14 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         let comps = Calendar.current.dateComponents([.hour, .minute], from: now)
         let minuteOfDay = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-        let d = UserDefaults.standard
+        // The capture's own night window, no longer the notification quiet hours (see `nightWindow`).
+        let night = ContinuousHrvSchedule.nightWindow()
         return ContinuousHrvSchedule.streamWanted(
             continuousHrv: true,
             overnightOnly: PuffinExperiment.continuousHrvOvernightOnlyEnabled,
             minuteOfDay: minuteOfDay,
-            startMin: d.object(forKey: ContinuousHrvSchedule.quietStartKey) as? Int ?? ContinuousHrvSchedule.defaultStartMinutes,
-            endMin: d.object(forKey: ContinuousHrvSchedule.quietEndKey) as? Int ?? ContinuousHrvSchedule.defaultEndMinutes)
+            startMin: night.start,
+            endMin: night.end)
     }
 
     /// Single reconciler for the realtime-HR TOGGLE. The stream should be armed while EITHER a screen

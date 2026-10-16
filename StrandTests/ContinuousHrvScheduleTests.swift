@@ -104,4 +104,40 @@ final class ContinuousHrvScheduleTests: XCTestCase {
         XCTAssertFalse(ContinuousHrvSchedule.windowContains(0, startMin: 9 * 60, endMin: 17 * 60))
         XCTAssertFalse(ContinuousHrvSchedule.windowContains(1439, startMin: 9 * 60, endMin: 17 * 60))
     }
+
+    // MARK: The capture's own night window
+
+    /// Unset: 21:00 to 09:00, wider than quiet hours so early nights and late mornings are recorded.
+    func testNightWindowDefaults() {
+        let d = UserDefaults(suiteName: "ContinuousHrvNightWindowTests")!
+        d.removePersistentDomain(forName: "ContinuousHrvNightWindowTests")
+        let w = ContinuousHrvSchedule.nightWindow(defaults: d)
+        XCTAssertEqual(w.start, 21 * 60)
+        XCTAssertEqual(w.end, 9 * 60)
+        XCTAssertTrue(ContinuousHrvSchedule.windowContains(8 * 60 + 30, startMin: w.start, endMin: w.end))
+        XCTAssertTrue(ContinuousHrvSchedule.windowContains(21 * 60 + 15, startMin: w.start, endMin: w.end))
+        XCTAssertFalse(ContinuousHrvSchedule.windowContains(12 * 60, startMin: w.start, endMin: w.end))
+    }
+
+    /// A stored choice wins; an out-of-range stored value falls back to the default instead of being trusted.
+    func testNightWindowStoredAndInvalid() {
+        let d = UserDefaults(suiteName: "ContinuousHrvNightWindowTests2")!
+        d.removePersistentDomain(forName: "ContinuousHrvNightWindowTests2")
+        d.set(23 * 60, forKey: ContinuousHrvSchedule.nightStartKey)
+        d.set(5000, forKey: ContinuousHrvSchedule.nightEndKey)
+        let w = ContinuousHrvSchedule.nightWindow(defaults: d)
+        XCTAssertEqual(w.start, 23 * 60)
+        XCTAssertEqual(w.end, ContinuousHrvSchedule.nightDefaultEndMinutes)
+    }
+
+    /// The night window no longer reads the notification quiet hours.
+    func testNightWindowIgnoresQuietHours() {
+        let d = UserDefaults(suiteName: "ContinuousHrvNightWindowTests3")!
+        d.removePersistentDomain(forName: "ContinuousHrvNightWindowTests3")
+        d.set(23 * 60, forKey: ContinuousHrvSchedule.quietStartKey)
+        d.set(6 * 60, forKey: ContinuousHrvSchedule.quietEndKey)
+        let w = ContinuousHrvSchedule.nightWindow(defaults: d)
+        XCTAssertEqual(w.start, ContinuousHrvSchedule.nightDefaultStartMinutes)
+        XCTAssertEqual(w.end, ContinuousHrvSchedule.nightDefaultEndMinutes)
+    }
 }

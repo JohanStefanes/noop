@@ -77,6 +77,9 @@ struct SettingsView: View {
     /// while capture is actually overnight-only — and a user "correcting" that would write an explicit
     /// false and get the 24/7 behaviour they were trying to avoid.
     @AppStorage(PuffinExperiment.continuousHrvOvernightOnlyKey) private var continuousHrvOvernightOnly = true
+    /// The Continuous HRV night window (`ContinuousHrvSchedule.nightWindow`), minutes since local midnight.
+    @AppStorage(ContinuousHrvSchedule.nightStartKey) private var hrvNightStart = ContinuousHrvSchedule.nightDefaultStartMinutes
+    @AppStorage(ContinuousHrvSchedule.nightEndKey) private var hrvNightEnd = ContinuousHrvSchedule.nightDefaultEndMinutes
 
     // #477 Power saving moved OUT of this screen into `PowerSavingView` — a first-class More row on
     // iPhone (between Test Centre and Settings) and its own sidebar item on macOS. Its `@AppStorage`
@@ -356,6 +359,18 @@ struct SettingsView: View {
             DiagnosticsSheet(onClose: { showDiagnostics = false })
         }
         #endif
+    }
+
+
+    /// A wall-clock Date binding over minutes since local midnight, for the night-window pickers.
+    private func minuteBinding(_ minutes: Binding<Int>) -> Binding<Date> {
+        Binding(get: {
+            Calendar.current.date(bySettingHour: minutes.wrappedValue / 60, minute: minutes.wrappedValue % 60,
+                                  second: 0, of: Date()) ?? Date()
+        }, set: { date in
+            let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+            minutes.wrappedValue = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        })
     }
 
     // MARK: - Profile
@@ -1821,7 +1836,19 @@ struct SettingsView: View {
                     .onChangeCompat(of: continuousHrvOvernightOnly) { _ in
                         model.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
                     }
-                    Text("Runs the continuous HRV stream only during your quiet hours window (22:00–07:00 by default), roughly halving the battery cost. Daytime Stress readings will be sparser. Note: continuous background HRV capture (including daytime naps) is paused outside this window. For on-demand daytime HRV readings (including naps), use the \"Take an HRV reading\" button on the Live screen.")
+                    if continuousHrvOvernightOnly {
+                        FormRow(label: "Night from") {
+                            DatePicker("Night from", selection: minuteBinding($hrvNightStart), displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                        }
+                        FormRow(label: "Night until") {
+                            DatePicker("Night until", selection: minuteBinding($hrvNightEnd), displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                        }
+                        .onChangeCompat(of: hrvNightStart) { _ in model.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled) }
+                        .onChangeCompat(of: hrvNightEnd) { _ in model.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled) }
+                    }
+                    Text("Runs the continuous HRV stream only during this night window (21:00–09:00 by default), roughly halving the battery cost. Set it a little wider than your usual sleep so early nights and late mornings are recorded too. Daytime Stress readings will be sparser, and daytime naps aren't captured in the background. For an on-demand daytime HRV reading, use the \"Take an HRV reading\" button on the Live screen.")
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
