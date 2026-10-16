@@ -54,23 +54,7 @@ final class JohanSleepCoachModel: ObservableObject {
         debt = ledger
         debtTrend = Array(SleepDebt.debtSeries(series: series, needHours: needMin / 60).suffix(SleepDebt.defaultWindowNights))
 
-        // The next wake time as the wearer configured it (per-weekday overrides included): this morning's
-        // while it is still ahead (opened after midnight), otherwise tomorrow's.
-        let cal = Calendar.current
-        let now = Date()
-        let nowMin = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
-        let todayWake = WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: now))
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: now) ?? now
-        let wake = nowMin < todayWake
-            ? todayWake
-            : WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: tomorrow))
-
-        let payback = min(ledger.magnitudeMin, Self.maxPaybackMin)
-        let target = ledger.needMin + payback
-        let bed = ((wake - Int(target.rounded())) % 1440 + 1440) % 1440
-        recommendation = Recommendation(bedtimeMinutes: bed, wakeMinutes: wake, needMin: ledger.needMin,
-                                        paybackMin: payback, targetSleepMin: target,
-                                        nightsUsed: ledger.nightCount)
+        recommendation = Self.recommendation(ledger: ledger, goal: JohanSleepGoal.current)
 
         // The night, its typicals and consistency: the Sleep tab's builder over the same inputs it loads.
         let sessions = await repo.allSleepSessions()
@@ -104,6 +88,37 @@ final class JohanSleepCoachModel: ObservableObject {
         loaded = true
     }
 
+    /// Re-plans tonight for another goal without reloading the night.
+    func apply(goal: JohanSleepGoal) {
+        guard let debt else { return }
+        recommendation = Self.recommendation(ledger: debt, goal: goal)
+    }
+
+    /// Tonight's plan from the sleep ledger: the next configured wake time (this morning's while it is still
+    /// ahead, otherwise tomorrow's) minus the goal's share of need plus capped payback. Home's "Tonight" card
+    /// calls this too, so the two bedtimes can never differ.
+    static func recommendation(ledger: SleepDebtLedger, goal: JohanSleepGoal, now: Date = Date()) -> Recommendation {
+        let cal = Calendar.current
+        let nowMin = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
+        let todayWake = WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: now))
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: now) ?? now
+        let wake = nowMin < todayWake
+            ? todayWake
+            : WindDownNudge.wakeMinutes(forWeekday: cal.component(.weekday, from: tomorrow))
+
+        let payback = min(ledger.magnitudeMin, maxPaybackMin)
+        let target = (ledger.needMin + payback) * goal.fraction
+        let bed = ((wake - Int(target.rounded())) % 1440 + 1440) % 1440
+        return Recommendation(bedtimeMinutes: bed, wakeMinutes: wake, needMin: ledger.needMin,
+                              paybackMin: payback, targetSleepMin: target, nightsUsed: ledger.nightCount)
+    }
+
+    /// The ledger the Sleep tab plans with, from the stored nights alone (no session reads), for Home.
+    static func ledger(days: [DailyMetric]) -> SleepDebtLedger {
+        let series = days.map { (day: $0.day, totalSleepMin: $0.totalSleepMin) }
+        return SleepDebt.ledger(series: series, needHours: SleepModel.debtNeedMin(days: days) / 60)
+    }
+
     /// Beats that came over the live Bluetooth stream rather than the strap's banked history.
     nonisolated static func isLive(_ channel: RRSourceChannel?) -> Bool {
         switch channel {
@@ -124,6 +139,37 @@ final class JohanSleepCoachModel: ObservableObject {
         else if off < -20 { note = String(localized: "Your body clock runs about \(String(-off)) min earlier than your schedule.") }
         else { note = String(localized: "Your body clock matches your schedule.") }
         return BodyClock(idealBedHour: w.bedHour, idealWakeHour: w.wakeHour, note: note)
+    }
+}
+#endif
+
+#if os(iOS)
+/// How much of tonight's sleep goal to plan for, in WHOOP's three steps: all of it, most of it, or enough to
+/// get by. One stored choice shared by the Sleep tab and Home.
+enum JohanSleepGoal: String, CaseIterable, Identifiable {
+    case peak, perform, getBy
+
+    static let storageKey = "johanSleepGoal"
+    static var current: JohanSleepGoal {
+        JohanSleepGoal(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .peak
+    }
+
+    var id: String { rawValue }
+
+    var fraction: Double {
+        switch self {
+        case .peak: return 1.0
+        case .perform: return 0.85
+        case .getBy: return 0.70
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .peak: return String(localized: "Peak")
+        case .perform: return String(localized: "Perform")
+        case .getBy: return String(localized: "Get by")
+        }
     }
 }
 #endif

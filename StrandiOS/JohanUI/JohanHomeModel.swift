@@ -33,12 +33,28 @@ final class JohanHomeModel: ObservableObject {
         var hrv = Vital()
         var restingHR = Vital()
         var resp = Vital()
+        /// Measured SpO₂ first; the strap's unverified candidate only when none is stored and the
+        /// Experimental display of it is on (the same rule the original Today follows).
+        var spo2: Double?
+        var spo2IsEstimate = false
+        /// Skin temperature as stored (°C): the absolute night mean and/or its deviation from baseline.
+        var skinTempAbsC: Double?
+        var skinTempDevC: Double?
         var targetBand: ClosedRange<Int>?
         /// What shaped the recovery score, from the engine's own scoring (`ChargeBreakdownWiring`, the
         /// same call the original Today and Coupled sheets make). nil while the night cannot honestly
         /// score (no usable HRV baseline, or no HRV / resting HR).
         var drivers: [ChargeDriver]?
         var confidence: ScoreConfidence?
+    }
+
+    /// The weekly long-term figures (latest stored point of each), nil until the engine has written one.
+    struct Healthspan: Equatable {
+        var bodyAge: Double?
+        var vitality: Double?
+        var fitnessAge: Double?
+        var vo2max: Double?
+        var isEmpty: Bool { bodyAge == nil && vitality == nil && fitnessAge == nil && vo2max == nil }
     }
 
     /// One day's three ring values for the week strip and the month calendar.
@@ -59,6 +75,9 @@ final class JohanHomeModel: ObservableObject {
     /// The newest heart-rate sample already stored for today, so the live card has an honest number to
     /// show (dimmed, with its age) during the seconds the strap takes to start streaming.
     @Published private(set) var lastStoredHR: HRSample?
+    @Published private(set) var healthspan = Healthspan()
+    /// SpO₂ candidate by day ("spo2_candidate" series), the fallback behind `Snapshot.spo2`.
+    private var spo2CandidateByDay: [String: Double] = [:]
 
     let calibrationLength = Baselines.minNightsSeed
 
@@ -94,6 +113,17 @@ final class JohanHomeModel: ObservableObject {
         }
         for p in sleep { out[p.day, default: DayRings()].sleepPct = p.value }
         if out != dayRings { dayRings = out }
+    }
+
+    /// Body Age, Vitality, Fitness Age and VO₂max: the latest weekly point of each, as Health shows them.
+    func loadHealthspan(repo: Repository) async {
+        async let body = repo.exploreSeries(key: "body_age", source: "my-whoop")
+        async let vitality = repo.exploreSeries(key: "vitality", source: "my-whoop")
+        async let fitness = repo.exploreSeries(key: "fitness_age", source: "my-whoop")
+        async let vo2 = repo.exploreSeries(key: "vo2max_est", source: "my-whoop")
+        let next = Healthspan(bodyAge: await body.last?.value, vitality: await vitality.last?.value,
+                              fitnessAge: await fitness.last?.value, vo2max: await vo2.last?.value)
+        if next != healthspan { healthspan = next }
     }
 
     static let keyParser: DateFormatter = {
@@ -138,6 +168,12 @@ final class JohanHomeModel: ObservableObject {
 
         let sleepSeries = await repo.exploreSeries(key: "sleep_performance", source: "my-whoop")
         let sleepPct = sleepSeries.last(where: { $0.day == key })?.value
+        if PuffinExperiment.spo2CandidateDisplayEnabled {
+            let candidates = await repo.exploreSeries(key: "spo2_candidate", source: "my-whoop")
+            spo2CandidateByDay = Dictionary(candidates.map { ($0.day, $0.value) }, uniquingKeysWith: { _, last in last })
+        } else {
+            spo2CandidateByDay = [:]
+        }
 
         var effort = strainStored
         if isToday {
@@ -185,6 +221,19 @@ final class JohanHomeModel: ObservableObject {
                             baseline: isToday ? usable(baselines?.restingHR) : nil)
         s.resp = Vital(value: row?.respRateBpm ?? respRow?.respRateBpm,
                        baseline: isToday ? usable(baselines?.resp) : nil)
+        // SpO₂ and skin temperature are sparse (imported or banked per night), so today carries the freshest
+        // prior value of each field, as the original Today does; a past day shows only its own.
+        let spo2Row = isToday ? Repository.lastSpo2Day(days: repo.days, todayKey: key) : nil
+        let skinRow = isToday ? Repository.lastSkinTempReadingDay(days: repo.days, todayKey: key) : nil
+        if let measured = row?.spo2Pct ?? spo2Row?.spo2Pct {
+            s.spo2 = measured
+        } else if let candidate = spo2CandidateByDay[key] {
+            s.spo2 = candidate
+            s.spo2IsEstimate = true
+        }
+        let skinSource = [row, skinRow].compactMap { $0 }.first { $0.skinTempC != nil || $0.skinTempDevC != nil }
+        s.skinTempAbsC = skinSource?.skinTempC
+        s.skinTempDevC = skinSource?.skinTempDevC
         s.targetBand = CoupledView.optimalStrainRange(recovery: row?.recovery)
         // The Sleep row scores against the same sleep figure the Schlaf dial on this screen shows.
         if let row, row.recovery != nil, let baselines,

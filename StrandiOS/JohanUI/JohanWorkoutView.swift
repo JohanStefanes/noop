@@ -59,7 +59,8 @@ struct JohanWorkoutView: View {
                 }
             }
             .johanStagger(0)
-            recentCard.johanStagger(1)
+            if model.activeWorkout == nil { JohanAutoWorkoutCard(offersSwitch: true).johanStagger(1) }
+            recentCard.johanStagger(2)
         }
         .sheet(item: $openWorkout) { w in
             NavigationStack { WorkoutDetailView(row: w.row).environmentObject(repo) }

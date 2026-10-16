@@ -44,13 +44,19 @@ struct JohanMoreView: View {
                 Row(id: "lift", title: String(localized: "Lift Log"), icon: "dumbbell.fill", tint: JohanTheme.strainBlue, destination: AnyView(LiftLogView())),
                 Row(id: "health", title: String(localized: "Health"), icon: "heart.text.square.fill", tint: JohanTheme.recoveryRed, destination: AnyView(HealthView())),
                 Row(id: "stress", title: String(localized: "Stress"), icon: "bolt.heart.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(StressView())),
-                Row(id: "breathe", title: String(localized: "Breathe"), icon: "wind", tint: JohanTheme.sleepViolet, destination: AnyView(BreathingView()))
+                Row(id: "breathe", title: String(localized: "Breathe"), icon: "wind", tint: JohanTheme.sleepViolet, destination: AnyView(BreathingView())),
+                Row(id: "intervals", title: String(localized: "Interval Timer"), icon: "timer", tint: JohanTheme.strainBlue, destination: AnyView(IntervalTimerView())),
+                Row(id: "healthspan", title: String(localized: "Healthspan"), icon: "hourglass", tint: JohanTheme.strainBlue, destination: AnyView(JohanHealthspanView())),
+                Row(id: "cycle", title: String(localized: "Cycle"), icon: "drop.degreesign", tint: JohanTheme.recoveryRed, destination: AnyView(JohanCycleView()))
             ]),
             (String(localized: "Insights"), [
                 Row(id: "week", title: String(localized: "Weekly Review"), icon: "calendar", tint: JohanTheme.recoveryGreen, destination: AnyView(JohanWeekView())),
                 Row(id: "trends", title: String(localized: "Trends"), icon: "chart.line.uptrend.xyaxis", tint: JohanTheme.strainBlue, destination: AnyView(TrendsView())),
                 Row(id: "coach", title: String(localized: "Coach"), icon: "sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(CoachView())),
                 Row(id: "insights", title: String(localized: "Journal & Insights"), icon: "lightbulb.fill", tint: JohanTheme.recoveryYellow, destination: AnyView(InsightsView())),
+                Row(id: "explore", title: String(localized: "Metric Explorer"), icon: "chart.xyaxis.line", tint: JohanTheme.strainBlue, destination: AnyView(MetricExplorerView())),
+                Row(id: "compare", title: String(localized: "Compare"), icon: "arrow.left.arrow.right", tint: JohanTheme.strainBlue, destination: AnyView(CompareView())),
+                Row(id: "labBook", title: String(localized: "Lab Book"), icon: "testtube.2", tint: JohanTheme.recoveryRed, destination: AnyView(LabBookView())),
                 Row(id: "hub", title: String(localized: "What Moves You"), icon: "wand.and.sparkles", tint: JohanTheme.sleepViolet, destination: AnyView(InsightsHubView())),
                 Row(id: "watchCompare", title: String(localized: "MG vs Watch"), icon: "applewatch", tint: JohanTheme.strainBlue, destination: AnyView(JohanWatchCompareView()))
             ]),

@@ -18,6 +18,12 @@ struct JohanHomeView: View {
     @Environment(\.johanIntroTarget) private var reportIntroTarget
     @State private var showRecoveryDetail = false
     @State private var showCalendar = false
+    /// Tonight's bedtime, from the same plan the Sleep tab shows (`JohanSleepCoachModel.recommendation`).
+    @State private var tonight: JohanSleepCoachModel.Recommendation?
+    @AppStorage(JohanSleepGoal.storageKey) private var sleepGoalRaw = JohanSleepGoal.peak.rawValue
+    @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
+    @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    @AppStorage(UnitPrefs.skinTempDisplayKey) private var skinTempDisplayRaw = ""
     private let motion = JohanStill()
 
     /// True when the visible day was reached by going back in time (content enters from the leading edge).
@@ -43,6 +49,7 @@ struct JohanHomeView: View {
                     .background { introTargetReader(size: ringSize, recColor: recColor) }
                 statsRow(s, recColor: recColor).johanStagger(2)
                 statusCard(s, zone: zone).padding(.top, 6).johanStagger(3)
+                if s.isToday { JohanAutoWorkoutCard() }
                 // Both cards take the taller one's height, so the row reads as one band.
                 JohanAdaptiveStack(spacing: 12) {
                     JohanCard(padding: 14) { liveHRContent.frame(maxHeight: .infinity, alignment: .top) }
@@ -51,6 +58,9 @@ struct JohanHomeView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .johanStagger(4)
                 vitalsCard(s).johanStagger(5)
+                if s.isToday, let tonight { tonightCard(tonight).johanStagger(6) }
+                if !model.healthspan.isEmpty { healthspanCard(model.healthspan).johanStagger(7) }
+                if s.isToday { JohanCycleHomeCard().johanStagger(8) }
             }
             .id(model.dayOffset)
             .transition(.asymmetric(
@@ -81,9 +91,21 @@ struct JohanHomeView: View {
             Task {
                 await model.load(repo: repo, profile: profile)
                 await model.loadRings(repo: repo)
+                await model.loadHealthspan(repo: repo)
+                planTonight()
             }
         }
-        .task(id: reloadTick) { await model.loadRings(repo: repo) }
+        .task(id: reloadTick) {
+            await model.loadRings(repo: repo)
+            await model.loadHealthspan(repo: repo)
+            planTonight()
+        }
+        .onChange(of: sleepGoalRaw) { _, _ in planTonight() }
+    }
+
+    private func planTonight() {
+        let goal = JohanSleepGoal(rawValue: sleepGoalRaw) ?? .peak
+        tonight = JohanSleepCoachModel.recommendation(ledger: JohanSleepCoachModel.ledger(days: repo.days), goal: goal)
     }
 
     /// Reloads the day when it changes or when `JohanRootView` asks every screen to reload.
@@ -396,25 +418,151 @@ struct JohanHomeView: View {
 
     // MARK: Vitals
 
+    /// The nightly vitals, in WHOOP's Health Monitor set: HRV, resting HR and respiratory rate against the
+    /// personal average, then SpO₂ and skin temperature. Opens the full Health screen.
     private func vitalsCard(_ s: JohanHomeModel.Snapshot) -> some View {
-        JohanCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Vitals").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
-                JohanAdaptiveStack(spacing: 8) {
-                    vital("HRV", s.hrv, unit: "ms", decimals: 0, higherIsBetter: true)
-                    vital(String(localized: "Resting HR"), s.restingHR, unit: "bpm", decimals: 0, higherIsBetter: false)
-                    vital(String(localized: "Respiratory rate"), s.resp, unit: "/min", decimals: 1, higherIsBetter: nil)
+        NavigationLink {
+            HealthView()
+                .background(JohanTheme.background.ignoresSafeArea())
+                .navigationBarTitleDisplayMode(.inline)
+        } label: {
+            JohanCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Vitals").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                    }
+                    JohanAdaptiveStack(spacing: 8) {
+                        vital("HRV", s.hrv, unit: "ms", decimals: 0, higherIsBetter: true)
+                        vital(String(localized: "Resting HR"), s.restingHR, unit: "bpm", decimals: 0, higherIsBetter: false)
+                        vital(String(localized: "Respiratory rate"), s.resp, unit: "/min", decimals: 1, higherIsBetter: nil)
+                    }
+                    JohanAdaptiveStack(spacing: 8) {
+                        vital(String(localized: "Blood oxygen"), JohanHomeModel.Vital(value: s.spo2), unit: "%",
+                              decimals: 0, higherIsBetter: nil,
+                              caption: s.spo2IsEstimate ? String(localized: "estimate") : nil)
+                        skinTempTile(s)
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: 1).accessibilityHidden(true)
+                    }
+                    if s.hrv.baseline == nil && s.restingHR.baseline == nil && s.resp.baseline == nil {
+                        Text(s.isToday ? String(localized: "The comparison with your average (Ø) follows after calibration.") : String(localized: "Past days have no comparison with your average."))
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                    }
                 }
-                if s.hrv.baseline == nil && s.restingHR.baseline == nil && s.resp.baseline == nil {
-                    Text(s.isToday ? String(localized: "The comparison with your average (Ø) follows after calibration.") : String(localized: "Past days have no comparison with your average."))
-                        .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+            }
+        }
+        .buttonStyle(JohanPressStyle())
+        .accessibilityHint(Text("Opens Health"))
+    }
+
+    /// Skin temperature as the Health screen shows it: the absolute night mean or its deviation, whichever
+    /// the wearer prefers and the night has, in their temperature unit. A deviation reads as its own delta.
+    private func skinTempTile(_ s: JohanHomeModel.Snapshot) -> some View {
+        let reading = SkinTempDisplay.leadReading(absC: s.skinTempAbsC, devC: s.skinTempDevC,
+                                                  prefer: SkinTempDisplay.Kind(rawValue: skinTempDisplayRaw) ?? .absolute)
+        let unit = UnitPrefs.resolveTemperature(system: UnitSystem(rawValue: unitSystemRaw) ?? .metric,
+                                                override: temperatureRaw)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Skin temp").font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Text(TodayView.skinTempCardValue(reading: reading, fahrenheit: unit == .fahrenheit))
+                .johanNumberFont(22)
+                .foregroundStyle(reading == nil ? JohanTheme.textTertiary : JohanTheme.textPrimary)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            if reading?.kind == .deviation {
+                Text("vs. your baseline").font(.system(.caption2, weight: .semibold))
+                    .foregroundStyle(JohanTheme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Tonight
+
+    /// When to go to bed tonight, the Sleep tab's plan in one line; opens Sleep.
+    private func tonightCard(_ rec: JohanSleepCoachModel.Recommendation) -> some View {
+        let goal = JohanSleepGoal(rawValue: sleepGoalRaw) ?? .peak
+        return tabLink(.sleep, hint: String(localized: "Opens Sleep")) {
+            JohanCard {
+                HStack(spacing: 14) {
+                    Image(systemName: "bed.double.fill")
+                        .font(.system(.body, weight: .bold))
+                        .foregroundStyle(JohanTheme.sleepViolet)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(JohanTheme.sleepViolet.opacity(0.16)))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tonight").font(.system(.footnote, weight: .semibold)).foregroundStyle(JohanTheme.sleepViolet)
+                        Text("In bed by \(Self.clock(rec.bedtimeMinutes))")
+                            .font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                        Text("\(goal.title): \(JohanSleepText.hm(rec.targetSleepMin)) of sleep, up at \(Self.clock(rec.wakeMinutes))")
+                            .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
+                        .foregroundStyle(JohanTheme.textTertiary)
                 }
             }
         }
     }
 
+    private static func clock(_ minutes: Int) -> String { String(format: "%02d:%02d", minutes / 60, minutes % 60) }
+
+    // MARK: Healthspan
+
+    /// Body Age, VO₂max and Vitality, the weekly long-term figures; opens the Healthspan page.
+    private func healthspanCard(_ h: JohanHomeModel.Healthspan) -> some View {
+        NavigationLink { JohanHealthspanView() } label: {
+            JohanCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Healthspan").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                    }
+                    JohanAdaptiveStack(spacing: 8) {
+                        longTerm(String(localized: "Body Age"), h.bodyAge.map { "\(Int($0.rounded()))" },
+                                 unit: String(localized: "yrs"),
+                                 note: h.bodyAge.map { JohanHealthspanView.ageDeltaLine(Double(profile.age) - $0) })
+                        longTerm(String(localized: "VO₂max"), h.vo2max.map { String(format: "%.1f", $0) },
+                                 unit: "ml/kg/min", note: nil)
+                        longTerm(String(localized: "Vitality"), h.vitality.map { "\(Int($0.rounded()))" },
+                                 unit: "/100", note: nil)
+                    }
+                }
+            }
+        }
+        .buttonStyle(JohanPressStyle())
+        .accessibilityHint(Text("Opens Healthspan"))
+    }
+
+    private func longTerm(_ title: String, _ value: String?, unit: String, note: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value ?? "–").johanNumberFont(22)
+                    .foregroundStyle(value == nil ? JohanTheme.textTertiary : JohanTheme.textPrimary)
+                if value != nil {
+                    Text(unit).font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+            }
+            if let note {
+                Text(note).font(.system(.caption2, weight: .semibold)).foregroundStyle(JohanTheme.textSecondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
     private func vital(_ title: String, _ v: JohanHomeModel.Vital, unit: String, decimals: Int,
-                       higherIsBetter: Bool?) -> some View {
+                       higherIsBetter: Bool?, caption: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
@@ -427,6 +575,8 @@ struct JohanHomeView: View {
             }
             if let d = v.delta {
                 deltaLabel(d, decimals: decimals, higherIsBetter: higherIsBetter)
+            } else if let caption {
+                Text(caption).font(.system(.caption2, weight: .semibold)).foregroundStyle(JohanTheme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -21,6 +21,7 @@ struct JohanSleepCoachView: View {
     /// The stage tapped in the stage rows: brought forward in the stage chart and the heart-rate chart.
     @State private var highlightedStage: SleepStage?
     @State private var showsNightDetails = false
+    @AppStorage(JohanSleepGoal.storageKey) private var goalRaw = JohanSleepGoal.peak.rawValue
 
     var body: some View {
         JohanScreen(title: String(localized: "Sleep")) {
@@ -76,6 +77,8 @@ struct JohanSleepCoachView: View {
                            String(localized: "Go to bed at this time to wake up rested at \(clock(rec.wakeMinutes))."))
                 Text(clock(rec.bedtimeMinutes))
                     .johanNumberFont(56).foregroundStyle(JohanTheme.sleepViolet)
+                    .contentTransition(.numericText())
+                goalPicker
                 sleepSum(rec)
                 Text(explanation(rec)).font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
                 if let clockWindow = JohanSleepCoachModel.bodyClock(model.circadianPhase, durationMin: rec.targetSleepMin) {
@@ -104,16 +107,42 @@ struct JohanSleepCoachView: View {
         }
     }
 
+    /// Peak / Perform / Get by: how much of the goal tonight is planned for. Shared with Home's Tonight card.
+    private var goalPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Sleep goal", selection: Binding(
+                get: { JohanSleepGoal(rawValue: goalRaw) ?? .peak },
+                set: { goal in
+                    goalRaw = goal.rawValue
+                    withAnimation(JohanTheme.Motion.cardIn) { coach.apply(goal: goal) }
+                })) {
+                ForEach(JohanSleepGoal.allCases) { goal in
+                    Text("\(goal.title) \(Int((goal.fraction * 100).rounded())) %").tag(goal)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(goalCaption).font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var goalCaption: String {
+        switch JohanSleepGoal(rawValue: goalRaw) ?? .peak {
+        case .peak: return String(localized: "Peak plans for your full need plus debt to pay back.")
+        case .perform: return String(localized: "Perform plans for 85 % of it: enough for a good day.")
+        case .getBy: return String(localized: "Get by plans for 70 %: a short night that keeps you going.")
+        }
+    }
+
     /// How the sleep time behind the bedtime is made up: need, plus debt to pay back, equals the target.
-    @ViewBuilder
     private func sleepSum(_ rec: JohanSleepCoachModel.Recommendation) -> some View {
-        let parts: [(String, String)] = rec.paybackMin >= 1
-            ? [(String(localized: "Sleep need"), hm(rec.needMin)),
-               (String(localized: "Pay back debt"), "+ " + hm(rec.paybackMin)),
-               (String(localized: "Sleep goal"), "= " + hm(rec.targetSleepMin))]
-            : [(String(localized: "Sleep need"), hm(rec.needMin)),
-               (String(localized: "Sleep goal"), "= " + hm(rec.targetSleepMin))]
-        statsLayout(parts)
+        let goal = JohanSleepGoal(rawValue: goalRaw) ?? .peak
+        var parts: [(String, String)] = [(String(localized: "Sleep need"), hm(rec.needMin))]
+        if rec.paybackMin >= 1 { parts.append((String(localized: "Pay back debt"), "+ " + hm(rec.paybackMin))) }
+        parts.append(goal == .peak
+                     ? (String(localized: "Sleep goal"), "= " + hm(rec.targetSleepMin))
+                     : ("\(goal.title) \(Int((goal.fraction * 100).rounded())) %", "= " + hm(rec.targetSleepMin)))
+        return statsLayout(parts)
     }
 
     private func explanation(_ rec: JohanSleepCoachModel.Recommendation) -> String {
