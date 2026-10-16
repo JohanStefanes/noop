@@ -102,6 +102,34 @@ python3 validate_spo2_candidate.py capture.json my_whoop_data/ --device strap-a 
 python3 validate_spo2_candidate.py --batch devices.json --postable
 ```
 
+### Byte-82 timing and value classes (one strap, two nights)
+
+Observations from one WHOOP MG on firmware **50.35.2.0**, two nights read from the app store
+(`v18AuxSample`) and the app's strap log. Aggregates only; no reference SpO₂ was available, so
+none of this validates the candidate as a percentage.
+
+- **Windows.** 48 runs of nonzero bytes, each **30 s** long, starting **1,200 s** apart (median of
+  both), at a fixed phase within a night. Outside them the byte is `0x00`.
+- **Console alignment.** The console line `generated a valid SPO2 during sleep` appeared once per
+  night. Its firmware tick was mapped to wall time from 20 of 29 `Realtime HR Data On` console
+  lines matching a stored `BLE_REALTIME_HR_ON` event within 3 s. On both nights the line falls at
+  the **end of that night's first window** (−2 s and +5 s), with no earlier window that night.
+  This ties the windows to the firmware's SpO₂ step in time only; the line carries no number.
+- **Two value classes.** Of 1,440 window seconds, 976 (68 %) fall in 70–100; per-window means of
+  those ranged 86–98. The other 464 (32 %) are small bit patterns, all observed values built from
+  bits 1–5 and 7: for example `0x04`, `0x08`, `0x10`, `0x20`, `0x80`, `0x90`, `0xA0`, `0xA8`. Bit 6
+  never appeared. This fits the [sensor reference](PROTOCOL_SENSORS.md) naming the R26 byte a
+  signal-acceptance result: one byte carrying either a value or a status code.
+- **Codes and movement.** Per window, the share of code values rose with mean dynamic acceleration
+  over the window and the minute before it: r = 0.48 over 48 windows; 23 % codes in the calmer half
+  against 41 % in the more-moving half. Consistent with rejection or quality codes, not established.
+- **Filter risk.** The candidate's 70–100 band excludes every code seen here, but a code with bit 6
+  set would land inside it (`0x60` = 96). A future decoder should treat the byte as a tagged value
+  before trusting the band alone.
+
+Open: a reference SpO₂ for the same nights (data export or another oximeter), more straps and
+firmware versions, and the meaning of each code bit.
+
 ## Mapping the layout — ground-truth correlation
 
 An HCI capture on its own is a pile of un-labelled bytes. The fast way to label them is *known
