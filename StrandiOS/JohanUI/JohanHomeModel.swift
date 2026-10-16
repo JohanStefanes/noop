@@ -40,6 +40,11 @@ final class JohanHomeModel: ObservableObject {
         /// Skin temperature as stored (°C): the absolute night mean and/or its deviation from baseline.
         var skinTempAbsC: Double?
         var skinTempDevC: Double?
+        /// The day each of these two belongs to, when it is not the shown day's own: carried from an earlier
+        /// night (within `Baselines.vitalCarryDays`), or, past that, only remembered so the tile can say how
+        /// old the last one is while showing no number.
+        var spo2Day: String?
+        var skinTempDay: String?
         var targetBand: ClosedRange<Int>?
         /// What shaped the recovery score, from the engine's own scoring (`ChargeBreakdownWiring`, the
         /// same call the original Today and Coupled sheets make). nil while the night cannot honestly
@@ -225,15 +230,24 @@ final class JohanHomeModel: ObservableObject {
         // prior value of each field, as the original Today does; a past day shows only its own.
         let spo2Row = isToday ? Repository.lastSpo2Day(days: repo.days, todayKey: key) : nil
         let skinRow = isToday ? Repository.lastSkinTempReadingDay(days: repo.days, todayKey: key) : nil
-        if let measured = row?.spo2Pct ?? spo2Row?.spo2Pct {
+        // A carried value older than the respiratory carry window is not shown as a number: a months-old
+        // import read as last night's is the "Respiratory 15.6 a fortnight later" bug in another tile.
+        let cutoff = Baselines.cutoffKey(todayKey: key)
+        if let measured = row?.spo2Pct {
             s.spo2 = measured
+        } else if let carried = spo2Row, let pct = carried.spo2Pct {
+            s.spo2Day = carried.day
+            if carried.day >= cutoff { s.spo2 = pct }
         } else if let candidate = spo2CandidateByDay[key] {
             s.spo2 = candidate
             s.spo2IsEstimate = true
         }
         let skinSource = [row, skinRow].compactMap { $0 }.first { $0.skinTempC != nil || $0.skinTempDevC != nil }
-        s.skinTempAbsC = skinSource?.skinTempC
-        s.skinTempDevC = skinSource?.skinTempDevC
+        if let skinSource, skinSource.day != key { s.skinTempDay = skinSource.day }
+        if let skinSource, skinSource.day >= cutoff {
+            s.skinTempAbsC = skinSource.skinTempC
+            s.skinTempDevC = skinSource.skinTempDevC
+        }
         s.targetBand = CoupledView.optimalStrainRange(recovery: row?.recovery)
         // The Sleep row scores against the same sleep figure the Schlaf dial on this screen shows.
         if let row, row.recovery != nil, let baselines,

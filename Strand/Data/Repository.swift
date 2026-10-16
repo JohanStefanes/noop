@@ -1271,6 +1271,20 @@ final class Repository: ObservableObject {
         return Self.mergeRRByIdentity(lists)
     }
 
+    /// The raw `@82` byte of every banked 5/MG v18 second in `[from, to]`, across the strap's own id
+    /// namespaces, as `(ts, value)`. Unfiltered on purpose: the byte is the unvalidated
+    /// `spo2_candidate_82`, so the in-band rule belongs to the one comparison that reads it
+    /// (`JohanWatchCompare`), never to a shipped metric. Empty for a WHOOP 4.0.
+    func v18AuxByte82(from: Int, to: Int, limit: Int = 200_000) async -> [(ts: Int, value: Int)] {
+        guard let store = await ensureStore() else { return [] }
+        var byTs: [Int: Int] = [:]
+        for id in rawPhysiologyReadIds(store: store) {
+            let rows = (try? await store.v18AuxSamples(deviceId: id, from: from, to: to, limit: limit)) ?? []
+            for r in rows { if let v = r.auxByte82, byTs[r.ts] == nil { byTs[r.ts] = v } }
+        }
+        return byTs.sorted { $0.key < $1.key }.map { (ts: $0.key, value: $0.value) }
+    }
+
     /// Logical day-start of the most recent day the active device has HR data for, or nil when the store is
     /// empty. Lets the Deep Timeline open on a day that actually has data instead of a possibly-empty today
     /// right after a history sync , the #597 root cause (the timeline was today-only with no way back).

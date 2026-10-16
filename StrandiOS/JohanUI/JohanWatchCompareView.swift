@@ -8,7 +8,7 @@ import WhoopProtocol
 ///
 /// Watch samples only: NOOP writes its own heart rate and sleep back into Health, so anything this app
 /// authored is dropped, and of the rest only samples recorded on an Apple Watch count. Uses the read access
-/// the Health connection already holds (heart rate, HRV, sleep), so it asks for nothing new.
+/// the Health connection already holds (heart rate, HRV, sleep, blood oxygen), so it asks for nothing new.
 @MainActor
 final class JohanWatchCompareModel: ObservableObject {
     @Published private(set) var nights: [JohanWatchCompare.Night] = []
@@ -24,7 +24,8 @@ final class JohanWatchCompareModel: ObservableObject {
         async let hr = watchHR(from: from, to: now)
         async let hrv = watchHRV(from: from, to: now)
         async let asleep = watchAsleep(from: from, to: now)
-        let (watchHR, watchHRV, watchAsleep) = await (hr, hrv, asleep)
+        async let spo2 = watchSpO2(from: from, to: now)
+        let (watchHR, watchHRV, watchAsleep, watchSpO2) = await (hr, hrv, asleep, spo2)
 
         let windows = JohanWatchCompare.windows(
             count: Self.nightCount, now: now, watchAsleep: watchAsleep,
@@ -35,10 +36,14 @@ final class JohanWatchCompareModel: ObservableObject {
             // A night at 1 Hz is ~30k HR rows and as many beats; the limits only guard a runaway window.
             let strapHR = await repo.hrSamples(from: w.start, to: w.end, limit: 80_000)
             let strapRR = await repo.rrIntervals(from: w.start, to: w.end, limit: 120_000)
+            // The strap keeps about a week of these seconds, so older nights simply have none.
+            let strapSpO2 = await repo.v18AuxByte82(from: w.start, to: w.end)
+                .map { (ts: $0.ts, pct: Double($0.value)) }
             let night = await Task.detached(priority: .userInitiated) {
                 JohanWatchCompare.compare(night: w.night, source: w.source, start: w.start, end: w.end,
                                           strapHR: strapHR, strapRR: strapRR,
-                                          watchHR: watchHR, watchHRV: watchHRV)
+                                          watchHR: watchHR, watchHRV: watchHRV,
+                                          strapSpO2: strapSpO2, watchSpO2: watchSpO2)
             }.value
             out.append(night)
         }
@@ -92,6 +97,17 @@ final class JohanWatchCompareModel: ObservableObject {
         }
     }
 
+    /// Blood oxygen readings, percent (HealthKit stores 0…1).
+    private func watchSpO2(from: Date, to: Date) async -> [(ts: Int, pct: Double)] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
+        return await samples(type, from: from, to: to).compactMap { s in
+            guard let q = s as? HKQuantitySample else { return nil }
+            let pct = q.quantity.doubleValue(for: .percent()) * 100
+            guard pct.isFinite else { return nil }
+            return (ts: Int(q.startDate.timeIntervalSince1970), pct: pct)
+        }
+    }
+
     private func watchAsleep(from: Date, to: Date) async -> [(start: Int, end: Int)] {
         guard let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
         let asleep = Set(HKCategoryValueSleepAnalysis.allAsleepValues.map(\.rawValue))
@@ -116,6 +132,7 @@ struct JohanWatchCompareView: View {
             } else {
                 summaryCard
                 if model.summary.nightsBoth == 0 { emptyHint }
+                spo2Card
                 JohanOverline(String(localized: "Nights")).padding(.top, 8)
                 ForEach(model.nights.reversed(), id: \.night) { nightCard($0) }
                 Text("The Watch measures HRV as SDNN over about a minute, a few times a night. Each reading is compared with the strap's SDNN over the same minute, not with its overnight RMSSD.")
@@ -145,6 +162,44 @@ struct JohanWatchCompareView: View {
                     .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
             }
         }
+    }
+
+    /// Whether the strap's SpO₂ candidate follows the Watch from night to night. The candidate is an
+    /// unvalidated byte, so this card is evidence-gathering, and says so until enough varied nights exist.
+    private var spo2Card: some View {
+        let s = model.summary
+        let need = JohanWatchCompare.minSpO2NightsForR
+        return JohanCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Blood oxygen (strap estimate)").font(JohanTheme.Fonts.title).foregroundStyle(JohanTheme.textPrimary)
+                JohanAdaptiveStack(spacing: 16) {
+                    stat(String(localized: "Nights"), "\(s.spo2Nights)", note: String(localized: "strap and Watch"))
+                    stat(String(localized: "Difference"), signed(s.spo2Bias, unit: "%"),
+                         note: String(localized: "±\(number(s.spo2MAE))"))
+                    stat("r", s.spo2R.map { $0.formatted(.number.precision(.fractionLength(2))) } ?? "–",
+                         note: String(localized: "Watch spread \(number(s.spo2WatchSpread)) %"))
+                }
+                Text(spo2Verdict(s, need: need))
+                    .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The strap value is an unconfirmed reading of one byte the strap sends during sleep. It stays an estimate until it follows the Watch over many nights.")
+                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func spo2Verdict(_ s: JohanWatchCompare.Summary, need: Int) -> String {
+        if s.spo2Nights < need {
+            return String(localized: "\(s.spo2Nights) of \(need) nights so far. Turn on Blood Oxygen on the Watch and wear both overnight.")
+        }
+        if (s.spo2WatchSpread ?? 0) < 2 {
+            return String(localized: "Your Watch values barely change from night to night, so r cannot show yet whether the strap follows them. Only the difference says something so far.")
+        }
+        guard let r = s.spo2R else { return String(localized: "Not enough variation to compare yet.") }
+        if r >= 0.7 { return String(localized: "The strap follows the Watch closely so far.") }
+        if r >= 0.4 { return String(localized: "The strap follows the Watch only loosely so far.") }
+        return String(localized: "The strap does not follow the Watch so far.")
     }
 
     private var emptyHint: some View {
@@ -193,6 +248,11 @@ struct JohanWatchCompareView: View {
                          tint: JohanTheme.sleepViolet)
                 } else {
                     line("applewatch", String(localized: "No Watch data"), tint: JohanTheme.textTertiary)
+                }
+                if n.strapSpO2 != nil || n.watchSpO2 != nil {
+                    line("drop.fill",
+                         String(localized: "SpO₂ strap \(number(n.strapSpO2)) %, Watch \(number(n.watchSpO2)) % (\(n.watchSpO2Count) readings)"),
+                         tint: JohanTheme.recoveryRed)
                 }
             }
         }

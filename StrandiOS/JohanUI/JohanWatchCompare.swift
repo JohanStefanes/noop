@@ -60,6 +60,14 @@ enum JohanWatchCompare {
         /// Strap and Watch SDNN over the same window.
         var hrvPairs: [HRVPair] = []
 
+        // SpO₂: the strap's unvalidated `spo2_candidate_82` against the Watch's own readings, each as its
+        // mean over the window. Two night means, not paired samples: the strap byte is duty-cycled and the
+        // Watch reads a few times a night, so their moments rarely meet.
+        var strapSpO2Count = 0
+        var strapSpO2: Double?
+        var watchSpO2Count = 0
+        var watchSpO2: Double?
+
         var hrvBias: Double? { Self.mean(hrvPairs.map { $0.strap - $0.watch }) }
         var hrvMAE: Double? { Self.mean(hrvPairs.map { abs($0.strap - $0.watch) }) }
         var hasWatch: Bool { watchHRCount > 0 || watchHRVCount > 0 }
@@ -69,6 +77,10 @@ enum JohanWatchCompare {
             xs.isEmpty ? nil : xs.reduce(0, +) / Double(xs.count)
         }
     }
+
+    /// One SpO₂ reading, percent. Strap candidates outside this band are the byte's off-window zeros or noise,
+    /// the same in-band rule `AnalyticsEngine.nightlySpo2CandidateMean` applies.
+    static let spo2Band = 70.0...100.0
 
     /// A gap in strap HR longer than this counts.
     static let gapSec = 300
@@ -119,7 +131,9 @@ enum JohanWatchCompare {
     /// must already be the store's scored read (one transport, suspect beats dropped).
     static func compare(night: Date, source: WindowSource, start: Int, end: Int,
                         strapHR: [HRSample], strapRR: [RRInterval],
-                        watchHR: [HRSample], watchHRV: [HRVReading]) -> Night {
+                        watchHR: [HRSample], watchHRV: [HRVReading],
+                        strapSpO2: [(ts: Int, pct: Double)] = [],
+                        watchSpO2: [(ts: Int, pct: Double)] = []) -> Night {
         var out = Night(night: night, source: source, start: start, end: end)
         let hr = strapHR.filter { $0.ts >= start && $0.ts < end }.sorted { $0.ts < $1.ts }
         let rr = strapRR.filter { $0.ts >= start && $0.ts < end }
@@ -162,6 +176,13 @@ enum JohanWatchCompare {
             guard seg.nClean >= hrvMinBeats, let s = seg.sdnn else { continue }
             out.hrvPairs.append(HRVPair(strap: s, watch: r.sdnnMs))
         }
+
+        let strapO2 = strapSpO2.filter { $0.ts >= start && $0.ts < end && spo2Band.contains($0.pct) }.map(\.pct)
+        let watchO2 = watchSpO2.filter { $0.ts >= start && $0.ts < end && spo2Band.contains($0.pct) }.map(\.pct)
+        out.strapSpO2Count = strapO2.count
+        out.strapSpO2 = Night.mean(strapO2)
+        out.watchSpO2Count = watchO2.count
+        out.watchSpO2 = Night.mean(watchO2)
         return out
     }
 
@@ -177,7 +198,18 @@ enum JohanWatchCompare {
         var hrvPairs = 0
         var hrvBias: Double?
         var hrvMAE: Double?
+        /// Nights where both the strap candidate and the Watch read SpO₂.
+        var spo2Nights = 0
+        var spo2Bias: Double?
+        var spo2MAE: Double?
+        /// Pearson r of the night means, from `minSpO2NightsForR` nights on.
+        var spo2R: Double?
+        /// Highest minus lowest Watch night mean: without spread, r says nothing about tracking.
+        var spo2WatchSpread: Double?
     }
+
+    /// Fewer nights than this give no correlation: two points always lie on a line.
+    static let minSpO2NightsForR = 5
 
     /// Pooled over every pair, so a night with many readings weighs more than one with few.
     static func summarize(_ nights: [Night]) -> Summary {
@@ -195,7 +227,30 @@ enum JohanWatchCompare {
         s.hrvPairs = pairs.count
         s.hrvBias = Night.mean(pairs.map { $0.strap - $0.watch })
         s.hrvMAE = Night.mean(pairs.map { abs($0.strap - $0.watch) })
+
+        let o2 = nights.compactMap { n -> (Double, Double)? in
+            guard let a = n.strapSpO2, let b = n.watchSpO2 else { return nil }
+            return (a, b)
+        }
+        s.spo2Nights = o2.count
+        s.spo2Bias = Night.mean(o2.map { $0.0 - $0.1 })
+        s.spo2MAE = Night.mean(o2.map { abs($0.0 - $0.1) })
+        if let lo = o2.map(\.1).min(), let hi = o2.map(\.1).max() { s.spo2WatchSpread = hi - lo }
+        if o2.count >= minSpO2NightsForR { s.spo2R = pearson(o2) }
         return s
+    }
+
+    /// nil when either side does not vary (r is undefined there).
+    static func pearson(_ xy: [(Double, Double)]) -> Double? {
+        guard xy.count >= 2 else { return nil }
+        let n = Double(xy.count)
+        let mx = xy.reduce(0) { $0 + $1.0 } / n, my = xy.reduce(0) { $0 + $1.1 } / n
+        var sxy = 0.0, sxx = 0.0, syy = 0.0
+        for (x, y) in xy {
+            sxy += (x - mx) * (y - my); sxx += (x - mx) * (x - mx); syy += (y - my) * (y - my)
+        }
+        guard sxx > 0, syy > 0 else { return nil }
+        return sxy / (sxx * syy).squareRoot()
     }
 
     // MARK: Helpers

@@ -442,7 +442,8 @@ struct JohanHomeView: View {
                     JohanAdaptiveStack(spacing: 8) {
                         vital(String(localized: "Blood oxygen"), JohanHomeModel.Vital(value: s.spo2), unit: "%",
                               decimals: 0, higherIsBetter: nil,
-                              caption: s.spo2IsEstimate ? String(localized: "estimate") : nil)
+                              caption: s.spo2IsEstimate ? String(localized: "estimate")
+                                  : s.spo2Day.map { Self.readingAge($0, shown: s.spo2 != nil) })
                         skinTempTile(s)
                         Color.clear.frame(maxWidth: .infinity, maxHeight: 1).accessibilityHidden(true)
                     }
@@ -471,13 +472,23 @@ struct JohanHomeView: View {
                 .johanNumberFont(22)
                 .foregroundStyle(reading == nil ? JohanTheme.textTertiary : JohanTheme.textPrimary)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            if reading?.kind == .deviation {
+            if let day = s.skinTempDay {
+                Text(Self.readingAge(day, shown: reading != nil)).font(.system(.caption2, weight: .semibold))
+                    .foregroundStyle(JohanTheme.textSecondary)
+            } else if reading?.kind == .deviation {
                 Text("vs. your baseline").font(.system(.caption2, weight: .semibold))
                     .foregroundStyle(JohanTheme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    /// "from 3 Oct" under a carried reading, "last 3 Oct" under the dash once it is too old to show.
+    private static func readingAge(_ day: String, shown: Bool) -> String {
+        let date = JohanHomeModel.keyParser.date(from: day)
+            .map { $0.formatted(Date.FormatStyle(locale: AppLanguage.activeLocale).day().month(.abbreviated)) } ?? day
+        return shown ? String(localized: "from \(date)") : String(localized: "last \(date)")
     }
 
     // MARK: Tonight

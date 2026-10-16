@@ -76,4 +76,36 @@ final class JohanWatchCompareTests: XCTestCase {
         XCTAssertEqual(s.hrBias!, 2, accuracy: 1e-9)
         XCTAssertEqual(s.hrvPairs, 1)
     }
+
+    /// SpO₂: the strap's off-window zeros and out-of-band bytes are dropped, readings outside the window
+    /// are ignored, and the summary pairs night means.
+    func testSpO2NightMeansAndSummary() {
+        let start = ts(2026, 10, 13, 23)
+        let end = start + 8 * 3600
+        let strap: [(ts: Int, pct: Double)] = [(start + 10, 0), (start + 20, 94), (start + 30, 96), (start + 40, 120),
+                                              (end + 10, 80)]
+        let watch: [(ts: Int, pct: Double)] = [(start + 3600, 97), (start + 7200, 95), (start - 60, 90)]
+        let n = JohanWatchCompare.compare(night: Date(), source: .watch, start: start, end: end,
+                                          strapHR: [], strapRR: [], watchHR: [], watchHRV: [],
+                                          strapSpO2: strap, watchSpO2: watch)
+        XCTAssertEqual(n.strapSpO2Count, 2)
+        XCTAssertEqual(n.strapSpO2!, 95, accuracy: 1e-9)
+        XCTAssertEqual(n.watchSpO2Count, 2)
+        XCTAssertEqual(n.watchSpO2!, 96, accuracy: 1e-9)
+
+        // Five nights where the strap tracks the Watch one point low: bias -1, r 1, spread 4.
+        let nights = (0..<5).map { i -> JohanWatchCompare.Night in
+            var m = JohanWatchCompare.Night(night: Date(), source: .watch, start: 0, end: 1)
+            m.watchSpO2 = 94 + Double(i); m.strapSpO2 = 93 + Double(i)
+            return m
+        }
+        let s = JohanWatchCompare.summarize(nights)
+        XCTAssertEqual(s.spo2Nights, 5)
+        XCTAssertEqual(s.spo2Bias!, -1, accuracy: 1e-9)
+        XCTAssertEqual(s.spo2MAE!, 1, accuracy: 1e-9)
+        XCTAssertEqual(s.spo2R!, 1, accuracy: 1e-9)
+        XCTAssertEqual(s.spo2WatchSpread!, 4, accuracy: 1e-9)
+        // Under five nights there is no r.
+        XCTAssertNil(JohanWatchCompare.summarize(Array(nights.prefix(4))).spo2R)
+    }
 }
