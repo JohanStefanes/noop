@@ -137,6 +137,10 @@ enum BatteryNotifier {
     /// `IllnessNotifier` marks the day up front).
     static func onBatteryUpdate(pct: Int, charging: Bool?, enabled: Bool) {
         guard enabled else { return }
+        // A live reading means the strap is heard from again, so "last seen low" no longer holds; and
+        // once it is confirmed charging, every "charge it" note has been acted on. Pull them rather than
+        // let them sit in Notification Centre after the fact.
+        clearDelivered(charging == true ? actedOnByCharging : ["battery-stale"])
         let d = UserDefaults.standard
         let result = BatteryAlertPolicy.evaluate(
             pct: pct,
@@ -272,6 +276,16 @@ enum BatteryNotifier {
                  body: String(localized: "\(BatteryEstimator.label(hours: runway.usableHours)) of recording left, but tonight needs about \(BatteryEstimator.label(hours: runway.requiredHours)). Charge before bed."),
                  interruptionLevel: .timeSensitive)
         }
+    }
+
+    /// The notes whose advice is "charge the strap": all stale once it is charging.
+    private static let actedOnByCharging = ["battery-low", "battery-runtime", "battery-critical",
+                                            "battery-bedtime", "battery-stale"]
+
+    private static func clearDelivered(_ identifiers: [String]) {
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
 
     private static func post(identifier: String, title: String, body: String,
