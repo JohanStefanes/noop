@@ -92,7 +92,7 @@ struct JohanMoreView: View {
                 .tint(JohanTheme.sleepViolet)
                 .background(JohanTheme.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(JohanTheme.background, for: .navigationBar)
+                .modifier(JohanPushedBarBackground())
         } else {
             screen
                 .background(JohanTheme.background.ignoresSafeArea())
@@ -375,6 +375,22 @@ private struct JohanStaticDestination: View, Equatable {
     let content: AnyView
     static func == (lhs: Self, rhs: Self) -> Bool { true }
     var body: some View { content }
+}
+#endif
+
+#if os(iOS)
+/// The black bar behind a pushed settings screen, on iOS 26 only. On iOS 17 and 18 a toolbar background on
+/// a `ScreenScaffold` screen pushed onto this stack never settles: UIKit re-lays the hosting view out on
+/// every pass and the app hangs at full CPU the moment Backup & Sync or Settings opens. Without it those
+/// releases show their default bar, which is transparent at the top of the screen anyway.
+private struct JohanPushedBarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.toolbarBackground(JohanTheme.background, for: .navigationBar)
+        } else {
+            content
+        }
+    }
 }
 #endif
 
