@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import UserNotifications
+import StrandDesign
 
 /// "Mehr": keeps every original NOOP screen reachable from the JohanUI shell. The key screens are linked
 /// directly; the complete original shell (with its own More list) opens full-screen, and the switch below
@@ -76,6 +77,29 @@ struct JohanMoreView: View {
         ]
     }
 
+    /// The original settings screens in "Strap & App", drawn in the JohanUI look.
+    private static let settingsRowIDs: Set<String> = ["alarms", "devices", "backup", "settings"]
+
+    /// An original screen in the JohanUI chrome. Settings screens also switch their cards to glass on black
+    /// and their switches to the JohanUI tint, which carries into the screens they push.
+    @ViewBuilder
+    private func destination(_ row: Row, settingsGroup: Bool) -> some View {
+        let screen = JohanStaticDestination(content: row.destination).equatable()
+        if settingsGroup {
+            screen
+                .environment(\.noopSurfaceStyle, .glass)
+                // The shell tints white; a white switch on a dark card reads as off.
+                .tint(JohanTheme.sleepViolet)
+                .background(JohanTheme.background.ignoresSafeArea())
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(JohanTheme.background, for: .navigationBar)
+        } else {
+            screen
+                .background(JohanTheme.background.ignoresSafeArea())
+                .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             JohanScreen(title: String(localized: "More")) {
@@ -85,9 +109,7 @@ struct JohanMoreView: View {
                         VStack(spacing: 0) {
                             ForEach(group.rows) { row in
                                 NavigationLink {
-                                    row.destination
-                                        .background(JohanTheme.background.ignoresSafeArea())
-                                        .navigationBarTitleDisplayMode(.inline)
+                                    destination(row, settingsGroup: Self.settingsRowIDs.contains(row.id))
                                 } label: { rowLabel(row.title, row.icon, tint: row.tint) }
                                 .buttonStyle(JohanRowStyle())
                                 if row.id != group.rows.last?.id { rowDivider }
@@ -341,6 +363,18 @@ struct JohanMoreView: View {
         .padding(.horizontal, 16).frame(minHeight: 52)
         .contentShape(Rectangle())
     }
+}
+#endif
+
+#if os(iOS)
+/// A More destination that never re-renders because the stack rebuilt it. Every row's screen takes no
+/// inputs, so two instances are always the same screen. Without this the NavigationStack re-created a
+/// pushed Settings on every pass and Settings, too large to rebuild in a frame, kept the main thread busy
+/// for good: the app froze the moment Settings opened.
+private struct JohanStaticDestination: View, Equatable {
+    let content: AnyView
+    static func == (lhs: Self, rhs: Self) -> Bool { true }
+    var body: some View { content }
 }
 #endif
 

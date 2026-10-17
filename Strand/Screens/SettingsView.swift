@@ -246,7 +246,6 @@ struct SettingsView: View {
     /// #1659. Default comes from `UpdateAvailability.defaultEnabled` so the toggle and the launch check
     /// cannot disagree about what "unset" means.
     @AppStorage(UpdateWatch.Keys.enabled) private var autoCheckUpdates = UpdateAvailability.defaultEnabled
-    @Environment(\.openURL) private var openURL
 
     /// Whether the "Advanced" disclosure (Recovery, Test Centre, experimental probes, Backup &
     /// restore) is expanded. Default FALSE so a first-run user lands on the handful of everyday
@@ -2570,7 +2569,10 @@ struct SettingsView: View {
                                     .foregroundStyle(StrandPalette.textPrimary)
                                 Spacer()
                                 NoopButton("Download", systemImage: "arrow.down.circle.fill", kind: .primary) {
-                                    openURL(url)
+                                    // Not `@Environment(\.openURL)`: hosted in the iOS JohanUI More stack, that
+                                    // value changes on every pass, and reading it re-rendered this whole screen in
+                                    // a loop that froze the app the moment Settings opened.
+                                    PlatformOpen.url(url)
                                 }
                             }
                             if !notes.isEmpty {
@@ -2820,6 +2822,7 @@ private struct SettingsDisclosureGroup<Content: View>: View {
     let subtitle: LocalizedStringKey
     @Binding var isExpanded: Bool
     @ViewBuilder var content: () -> Content
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.sectionSpacing) {
@@ -2829,10 +2832,10 @@ private struct SettingsDisclosureGroup<Content: View>: View {
                 HStack(alignment: .center, spacing: NoopMetrics.space3) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(StrandFont.title2)
+                            .font(surfaceStyle == .glass ? StrandFont.glassHeadline : StrandFont.title2)
                             .foregroundStyle(StrandPalette.textPrimary)
                         Text(subtitle)
-                            .font(StrandFont.subhead)
+                            .font(surfaceStyle == .glass ? StrandFont.glassFootnote : StrandFont.subhead)
                             .foregroundStyle(StrandPalette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
@@ -2868,8 +2871,41 @@ private struct SettingsSection<Content: View>: View {
     let title: LocalizedStringKey
     let blurb: LocalizedStringKey
     @ViewBuilder var content: () -> Content
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+    @ScaledMetric(relativeTo: .body) private var tileSize: CGFloat = 30
 
     var body: some View {
+        if surfaceStyle == .glass { glassBody } else { standardBody }
+    }
+
+    /// Glass shell (iOS personal layer): a tinted icon tile beside a plain headline, the way a system
+    /// grouped list labels a section. The "Settings" overline is dropped, the screen title already says it.
+    private var glassBody: some View {
+        StrandCard(padding: NoopMetrics.space4) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space3) {
+                HStack(spacing: NoopMetrics.space3) {
+                    Image(systemName: icon)
+                        .font(.system(.subheadline, weight: .semibold))
+                        .foregroundStyle(StrandPalette.accent)
+                        .frame(width: tileSize, height: tileSize)
+                        .background(RoundedRectangle(cornerRadius: tileSize * 0.27, style: .continuous)
+                            .fill(StrandPalette.accent.opacity(0.14)))
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(StrandFont.glassHeadline)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text(blurb)
+                    .font(StrandFont.glassFootnote)
+                    .foregroundStyle(StrandPalette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                content()
+            }
+        }
+    }
+
+    private var standardBody: some View {
         StrandCard(padding: NoopMetrics.space5) {
             VStack(alignment: .leading, spacing: NoopMetrics.space4) {
                 VStack(alignment: .leading, spacing: 2) {

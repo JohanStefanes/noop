@@ -37,6 +37,10 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
     /// at-root re-tap of the active tab (#198 follow-up). Default 0 never changes, so macOS and every
     /// non-tab screen keep their exact prior scroll behaviour.
     @Environment(\.scrollToTopSignal) private var scrollToTopSignal
+    /// `.glass` (set by the iOS personal layer): a true black canvas without the sky backdrop, and a
+    /// system large-title header, so a shared screen reads as part of that shell.
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+    private var isGlass: Bool { surfaceStyle == .glass }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -75,8 +79,12 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
         // on the opaque canvas and stay fully legible (2026-06-23: cards were "losing the data").
         .background(alignment: .top) {
             ZStack(alignment: .top) {
-                StrandPalette.surfaceBase
-                topBackground
+                if isGlass {
+                    NoopVisualStyle.glassCanvas
+                } else {
+                    StrandPalette.surfaceBase
+                    topBackground
+                }
             }
             .ignoresSafeArea()
         }
@@ -120,10 +128,14 @@ struct ScreenScaffold<Content: View, Trailing: View>: View {
                 if let title {
                     // Match the liquid home's title face (SF Rounded 28) so every page's header reads
                     // identically (2026-07-02 cohesion pass).
-                    Text(title).font(StrandFont.rounded(28)).foregroundStyle(StrandPalette.textPrimary)
+                    Text(title)
+                        .font(isGlass ? StrandFont.glassLargeTitle : StrandFont.rounded(28))
+                        .foregroundStyle(StrandPalette.textPrimary)
                 }
                 if let subtitle {
-                    Text(subtitle).font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
+                    Text(subtitle)
+                        .font(isGlass ? StrandFont.glassFootnote : StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textSecondary)
                 }
             }
             Spacer(minLength: 0)

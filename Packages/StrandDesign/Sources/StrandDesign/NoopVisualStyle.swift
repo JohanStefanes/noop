@@ -33,6 +33,31 @@ public enum NoopVisualStyle {
     public static let cardPadding: CGFloat = 16
     public static let itemGap: CGFloat = 12
     public static let sectionGap: CGFloat = 26
+
+    // Glass treatment (`NoopSurfaceStyle.glass`): true black canvas, a faint ink fill under a hairline
+    // edge, the iOS Fitness / Health card. Ink is the system label colour (#EBEBF5).
+    public static let glassCanvas = Color.black
+    public static let glassFill = Color(red: 0xeb / 255, green: 0xeb / 255, blue: 0xf5 / 255).opacity(0.075)
+    public static let glassBorder = Color(red: 0xeb / 255, green: 0xeb / 255, blue: 0xf5 / 255).opacity(0.10)
+}
+
+/// Which card treatment a subtree draws. `.glass` is set by a shell that renders shared screens over a
+/// black canvas (the iOS personal layer); everything else keeps `.standard`.
+public enum NoopSurfaceStyle: Sendable {
+    case standard
+    case glass
+}
+
+private struct NoopSurfaceStyleKey: EnvironmentKey {
+    static let defaultValue = NoopSurfaceStyle.standard
+}
+
+public extension EnvironmentValues {
+    /// Card treatment for every `NoopPanelSurface` (so every `StrandCard`) and `ScreenScaffold` below.
+    var noopSurfaceStyle: NoopSurfaceStyle {
+        get { self[NoopSurfaceStyleKey.self] }
+        set { self[NoopSurfaceStyleKey.self] = newValue }
+    }
 }
 
 /// Shared card/panel treatment: a solid surface on iOS, gradient and soft elevation elsewhere.
@@ -45,6 +70,7 @@ public struct NoopPanelSurface: View {
     #if !os(iOS)
     @Environment(\.colorScheme) private var scheme
     #endif
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
 
     public init(
         tint: Color? = nil,
@@ -60,6 +86,17 @@ public struct NoopPanelSurface: View {
 
     public var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if surfaceStyle == .glass {
+            shape
+                .fill(NoopVisualStyle.glassFill)
+                .overlay(shape.strokeBorder(tint?.opacity(0.22) ?? NoopVisualStyle.glassBorder, lineWidth: 0.5))
+                .opacity(surfaceOpacity)
+        } else {
+            standardSurface(shape)
+        }
+    }
+
+    @ViewBuilder private func standardSurface(_ shape: RoundedRectangle) -> some View {
         #if os(iOS)
         // Scrolling stacks contain many panels. Layered translucent gradients and blurred shadows
         // multiply their compositing work, so iOS uses one theme-aware fill and a thin tinted rim.

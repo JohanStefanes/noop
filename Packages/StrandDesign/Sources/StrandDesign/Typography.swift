@@ -61,6 +61,14 @@ public enum StrandFont {
     /// Footnote 11. Scales with Dynamic Type.
     public static let footnote = Font.system(.footnote, design: .rounded, weight: .regular)
 
+    // Glass faces (`NoopSurfaceStyle.glass`): plain SF Pro text styles, the iOS system settings set.
+    /// Large title / Bold, the system navigation title.
+    public static let glassLargeTitle = Font.system(.largeTitle, weight: .bold)
+    /// Headline / Semibold, a grouped section title.
+    public static let glassHeadline = Font.system(.headline)
+    /// Footnote, explanatory copy under a title.
+    public static let glassFootnote = Font.system(.footnote)
+
     /// Overline 11 / Bold, +1.4 tracking (apply `.tracking(1.4)` at use site;
     /// `overlineText(_:)` does it for you). Sparing ALL-CAPS labels. Scales with Dynamic Type.
     ///
