@@ -455,6 +455,7 @@ struct SettingsView: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                 rowDivider
                 FormRow(label: "Max heart rate") {
                     VStack(alignment: .trailing, spacing: 6) {
@@ -484,6 +485,7 @@ struct SettingsView: View {
                         .font(StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .settingsHelp()
                     ForEach(profile.hrZoneThresholds.indices, id: \.self) { index in
                         rowDivider
                         FormRow(label: "Zone \(index + 1) starts") {
@@ -512,6 +514,7 @@ struct SettingsView: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                 rowDivider
                 // Step calibration (#139/#132): daily steps = @57 counter ticks ÷ this divisor.
                 // 1.0 = raw pass-through until the true 5/MG tick rate is known. The divisor goes
@@ -536,6 +539,7 @@ struct SettingsView: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                 rowDivider
                 // Tap-through to the WHOOP 4.0 steps-ESTIMATE calibration (a SEPARATE thing from the
                 // 5/MG @57 counter divisor above): a 4.0 sends no step count, so NOOP estimates steps
@@ -563,6 +567,7 @@ struct SettingsView: View {
                     .font(StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -600,6 +605,7 @@ struct SettingsView: View {
                 .font(StrandFont.footnote)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .settingsHelp()
         }
         // Load the picked photo's bytes, then hand them to the store (which downscales + persists).
         // Clearing the selection afterwards lets the user re-pick the same photo if they want.
@@ -717,6 +723,7 @@ struct SettingsView: View {
                 .font(StrandFont.caption)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .settingsHelp()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Load the picked photo's bytes, hand them to the store (which downscales + persists), then clear
@@ -1035,6 +1042,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1304,6 +1312,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 rowDivider
@@ -1320,6 +1329,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // MARK: Sky behind cards — extend the day-cycle sky behind the WHOLE Today scroll so the
@@ -1338,6 +1348,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // MARK: Transparent cards — a quick on/off over the SAME cardOpacityPercent (no separate
@@ -1384,6 +1395,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 rowDivider
@@ -1469,6 +1481,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 // #518: Continuous HRV capture, "Overnight only" and the HRV window picker moved to the
                 // "HRV" card under Advanced (see `hrvCard`) — same @AppStorage bindings, same BLE + re-score
@@ -1520,6 +1533,7 @@ struct SettingsView: View {
                 .font(StrandFont.caption)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .settingsHelp()
         }
     }
 
@@ -1610,6 +1624,7 @@ struct SettingsView: View {
                 .font(StrandFont.caption)
                 .foregroundStyle(StrandPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+                .settingsHelp()
         }
     }
     #endif
@@ -1629,6 +1644,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1702,12 +1718,14 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 #if os(iOS)
                 Text("Also imports water from Apple Health when connected and allowed to read water data. Drinks logged in NOOP are not written to Apple Health.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
                 #endif
 
                 rowDivider
@@ -1725,11 +1743,13 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 Text("Skips sessions that overlap a saved or imported workout, including workouts from Apple Health.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 rowDivider
 
@@ -1762,6 +1782,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1791,6 +1812,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1822,6 +1844,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 // #927 Overnight only: window-gate the continuous stream to the nightly quiet-hours window.
                 if continuousHrvEnabled {
@@ -1851,6 +1874,7 @@ struct SettingsView: View {
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .settingsHelp()
                 }
 
                 // HRV window (#141) — Whole night (NOOP's long-standing value) or DEEP sleep only
@@ -1878,6 +1902,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1918,6 +1943,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -1970,6 +1996,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
 
                 rowDivider
 
@@ -1985,6 +2012,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -2023,6 +2051,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -2049,6 +2078,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -2094,6 +2124,7 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
             }
         }
     }
@@ -2459,6 +2490,7 @@ struct SettingsView: View {
                                 .font(StrandFont.footnote)
                                 .foregroundStyle(StrandPalette.textTertiary)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .settingsHelp()
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
@@ -3496,6 +3528,50 @@ private struct FormRow<Control: View>: View {
         }
         .frame(minHeight: 32)
     }
+}
+
+// MARK: - Help text
+
+/// A setting's explanatory paragraph. In the glass shell (iOS JohanUI) it folds behind a small
+/// "Details" line with an info icon, so the screen reads as a list of settings rather than a wall of
+/// prose; one tap shows it in place. Everywhere else it stays as it was, always visible.
+private struct SettingsHelp: ViewModifier {
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+    @State private var isOpen = false
+
+    func body(content: Content) -> some View {
+        if surfaceStyle == .glass {
+            VStack(alignment: .leading, spacing: NoopMetrics.space1) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { isOpen.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle")
+                        Text(isOpen ? "Less" : "Details")
+                        Image(systemName: "chevron.down")
+                            .imageScale(.small)
+                            .rotationEffect(.degrees(isOpen ? 180 : 0))
+                    }
+                    .font(StrandFont.glassFootnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+                if isOpen {
+                    content.transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    /// Folds a setting's explanatory text behind "Details" in the glass shell. See `SettingsHelp`.
+    func settingsHelp() -> some View { modifier(SettingsHelp()) }
 }
 
 // MARK: - Preview
