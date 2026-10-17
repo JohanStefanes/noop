@@ -28,8 +28,9 @@ final class JohanHomeModel: ObservableObject {
         var sleepPct: Double?
         /// Effort on WHOOP-style 0-21 axis (display conversion of the stored 0-100 value).
         var strain21: Double?
-        /// 1...Baselines.minNightsSeed while the baselines are forming, nil once recovery is available.
-        var calibrationDay: Int?
+        /// Nights already banked toward the recovery baseline (0..<Baselines.minNightsSeed) while it is
+        /// forming, nil once recovery is available.
+        var calibrationNights: Int?
         var hrv = Vital()
         var restingHR = Vital()
         var resp = Vital()
@@ -213,7 +214,7 @@ final class JohanHomeModel: ObservableObject {
         s.sleepPct = sleepPct
         s.strain21 = effort.map { UnitFormatter.effortValue($0, scale: .whoop) }
         if row?.recovery == nil, let n = calNights {
-            s.calibrationDay = min(n + 1, calibrationLength)
+            s.calibrationNights = min(n, calibrationLength - 1)
         }
         // Vitals: the day's own value; today falls back to the freshest prior night (same carry the liquid
         // Today uses). Deltas only on today, and only against a baseline the engine considers usable.

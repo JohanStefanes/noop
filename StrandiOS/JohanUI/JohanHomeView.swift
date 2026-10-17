@@ -329,10 +329,14 @@ struct JohanHomeView: View {
     /// calibration has come. A past day shows the zone without advice for a day that is over.
     @ViewBuilder
     private func statusCard(_ s: JohanHomeModel.Snapshot, zone: JohanTheme.RecoveryZone?) -> some View {
-        if let day = s.calibrationDay {
+        if let nights = s.calibrationNights {
+            let total = model.calibrationLength
+            let left = total - nights
             statusRow(icon: "hourglass", color: JohanTheme.strainBlue,
-                      title: String(localized: "Calibrating · day \(String(day)) of \(String(model.calibrationLength))"),
-                      detail: String(localized: "Recovery and sleep appear after the first nights, once your personal baselines are set. Wear the strap overnight too."))
+                      title: String(localized: "Learning your normal · \(String(nights)) of \(String(total)) nights"),
+                      detail: left == 1
+                        ? String(localized: "Recovery compares each night's HRV and resting heart rate with your own normal. Wear the strap tonight and it shows tomorrow morning. Sleep and Effort already work.")
+                        : String(localized: "Recovery compares each night's HRV and resting heart rate with your own normal. Wear the strap \(String(left)) more nights and it shows. Sleep and Effort already work."))
         } else if let zone {
             statusRow(icon: "checkmark", color: zone.color, title: zone.title,
                       detail: s.isToday ? zone.hint : nil)
