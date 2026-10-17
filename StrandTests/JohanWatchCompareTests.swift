@@ -108,4 +108,43 @@ final class JohanWatchCompareTests: XCTestCase {
         // Under five nights there is no r.
         XCTAssertNil(JohanWatchCompare.summarize(Array(nights.prefix(4))).spo2R)
     }
+
+    // MARK: Why no night has both
+
+    private typealias C = JohanWatchCompare.SampleCount
+
+    func testDiagnoseNamesEachGap() {
+        // Only NOOP's own write-backs: HealthKit returns those even with read access denied.
+        var t = JohanWatchCompare.SourceTally(heartRate: C(total: 900), sleep: C(total: 12))
+        XCTAssertEqual(JohanWatchCompare.diagnose(t, nightsBoth: 0), .noReadAccess)
+        XCTAssertEqual(JohanWatchCompare.diagnose(JohanWatchCompare.SourceTally(), nightsBoth: 0), .noReadAccess)
+
+        // Another source wrote samples, none from a Watch.
+        t.hrv = C(total: 4, foreign: 4)
+        t.droppedSources = ["Johan's iPhone · iPhone15,2"]
+        XCTAssertEqual(JohanWatchCompare.diagnose(t, nightsBoth: 0),
+                       .noWatchSamples(sources: ["Johan's iPhone · iPhone15,2"]))
+
+        // One Watch sample of any type is enough to blame the overlap instead.
+        t.spo2 = C(total: 3, foreign: 3, watch: 3)
+        XCTAssertEqual(JohanWatchCompare.diagnose(t, nightsBoth: 0), .noOverlap)
+
+        // A night with both leaves nothing to explain, whatever the counts.
+        XCTAssertNil(JohanWatchCompare.diagnose(t, nightsBoth: 1))
+        XCTAssertNil(JohanWatchCompare.diagnose(JohanWatchCompare.SourceTally(), nightsBoth: 2))
+    }
+
+    func testSourceLabelSkipsEmptyAndRepeatedParts() {
+        XCTAssertEqual(JohanWatchCompare.sourceLabel(name: "Apple Watch von Johan", productType: "Watch7,3", deviceModel: "Watch"),
+                       "Apple Watch von Johan · Watch7,3 · Watch")
+        XCTAssertEqual(JohanWatchCompare.sourceLabel(name: "AutoSleep", productType: nil, deviceModel: " "), "AutoSleep")
+        XCTAssertEqual(JohanWatchCompare.sourceLabel(name: "iPhone", productType: "iPhone15,2", deviceModel: "iPhone"),
+                       "iPhone · iPhone15,2")
+    }
+
+    func testDistinctSourcesKeepsFirstSeenOrderAndCaps() {
+        XCTAssertEqual(JohanWatchCompare.distinctSources(["b", "a", "b", "", "c", "a"]), ["b", "a", "c"])
+        let many = (0..<20).map { "s\($0)" }
+        XCTAssertEqual(JohanWatchCompare.distinctSources(many), Array(many.prefix(JohanWatchCompare.maxDroppedSources)))
+    }
 }

@@ -8,12 +8,15 @@ import WhoopProtocol
 ///
 /// Watch samples only: NOOP writes its own heart rate and sleep back into Health, so anything this app
 /// authored is dropped, and of the rest only samples recorded on an Apple Watch count. Uses the read access
-/// the Health connection already holds (heart rate, HRV, sleep, blood oxygen), so it asks for nothing new.
+/// the Health connection already holds (heart rate, HRV, sleep, blood oxygen); when the screen finds none, its
+/// hint re-runs that connection's own request rather than asking for anything new.
 @MainActor
 final class JohanWatchCompareModel: ObservableObject {
     @Published private(set) var nights: [JohanWatchCompare.Night] = []
     @Published private(set) var summary = JohanWatchCompare.Summary()
     @Published private(set) var loaded = false
+    /// Why no night has both devices; nil once one does.
+    @Published private(set) var gap: JohanWatchCompare.WatchDataGap?
 
     static let nightCount = 14
     private let store = HKHealthStore()
@@ -21,11 +24,24 @@ final class JohanWatchCompareModel: ObservableObject {
     func load(repo: Repository) async {
         let now = Date()
         let from = now.addingTimeInterval(-Double(Self.nightCount + 2) * 86_400)
-        async let hr = watchHR(from: from, to: now)
-        async let hrv = watchHRV(from: from, to: now)
-        async let asleep = watchAsleep(from: from, to: now)
-        async let spo2 = watchSpO2(from: from, to: now)
-        let (watchHR, watchHRV, watchAsleep, watchSpO2) = await (hr, hrv, asleep, spo2)
+        async let hrRaw = samples(HKQuantityType.quantityType(forIdentifier: .heartRate), from: from, to: now)
+        async let hrvRaw = samples(HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
+                                   from: from, to: now)
+        async let sleepRaw = samples(HKCategoryType.categoryType(forIdentifier: .sleepAnalysis), from: from, to: now)
+        async let spo2Raw = samples(HKQuantityType.quantityType(forIdentifier: .oxygenSaturation), from: from, to: now)
+        let (hrAll, hrvAll, sleepAll, spo2All) = await (hrRaw, hrvRaw, sleepRaw, spo2Raw)
+
+        // Counted before the Watch filter, so an empty screen can say which step emptied it.
+        var tally = JohanWatchCompare.SourceTally(
+            heartRate: Self.count(hrAll), hrv: Self.count(hrvAll),
+            spo2: Self.count(spo2All), sleep: Self.count(sleepAll))
+        tally.droppedSources = JohanWatchCompare.distinctSources(
+            (hrAll + hrvAll + spo2All + sleepAll).lazy.filter { !Self.isOwn($0) && !Self.isWatch($0) }.map(Self.label))
+
+        let watchHR = Self.heartRate(hrAll.filter(Self.isWatch))
+        let watchHRV = Self.hrv(hrvAll.filter(Self.isWatch))
+        let watchAsleep = Self.asleep(sleepAll.filter(Self.isWatch))
+        let watchSpO2 = Self.spo2(spo2All.filter(Self.isWatch))
 
         let windows = JohanWatchCompare.windows(
             count: Self.nightCount, now: now, watchAsleep: watchAsleep,
@@ -49,35 +65,56 @@ final class JohanWatchCompareModel: ObservableObject {
         }
         nights = out
         summary = JohanWatchCompare.summarize(out)
+        gap = JohanWatchCompare.diagnose(tally, nightsBoth: summary.nightsBoth)
         loaded = true
     }
 
     // MARK: HealthKit
 
+    /// Written by this app: NOOP's own heart rate and sleep write-backs.
+    nonisolated private static func isOwn(_ sample: HKSample) -> Bool {
+        sample.sourceRevision.source == HKSource.default()
+    }
+
     /// Recorded on an Apple Watch and not written by this app.
     nonisolated private static func isWatch(_ sample: HKSample) -> Bool {
-        if sample.sourceRevision.source == HKSource.default() { return false }
+        if isOwn(sample) { return false }
         if let product = sample.sourceRevision.productType, product.hasPrefix("Watch") { return true }
         return sample.device?.model == "Watch"
     }
 
-    private func samples(_ type: HKSampleType, from: Date, to: Date) async -> [HKSample] {
-        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+    nonisolated private static func label(_ sample: HKSample) -> String {
+        JohanWatchCompare.sourceLabel(name: sample.sourceRevision.source.name,
+                                      productType: sample.sourceRevision.productType,
+                                      deviceModel: sample.device?.model)
+    }
+
+    nonisolated private static func count(_ samples: [HKSample]) -> JohanWatchCompare.SampleCount {
+        var c = JohanWatchCompare.SampleCount(total: samples.count)
+        for s in samples where !isOwn(s) {
+            c.foreign += 1
+            if isWatch(s) { c.watch += 1 }
+        }
+        return c
+    }
+
+    /// Every sample in the range, unfiltered. A denied read returns an empty list here, not an error.
+    private func samples(_ type: HKSampleType?, from: Date, to: Date) async -> [HKSample] {
+        guard let type, HKHealthStore.isHealthDataAvailable() else { return [] }
         let predicate = HKQuery.predicateForSamples(withStart: from, end: to, options: [])
         let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
         return await withCheckedContinuation { (cont: CheckedContinuation<[HKSample], Never>) in
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
                                       sortDescriptors: [sort]) { _, samples, _ in
-                cont.resume(returning: (samples ?? []).filter(Self.isWatch))
+                cont.resume(returning: samples ?? [])
             }
             store.execute(query)
         }
     }
 
-    private func watchHR(from: Date, to: Date) async -> [HRSample] {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return [] }
+    private static func heartRate(_ samples: [HKSample]) -> [HRSample] {
         let unit = HKUnit.count().unitDivided(by: .minute())
-        return await samples(type, from: from, to: to).compactMap { s in
+        return samples.compactMap { s in
             guard let q = s as? HKQuantitySample else { return nil }
             let bpm = q.quantity.doubleValue(for: unit)
             guard bpm.isFinite, bpm >= 25, bpm <= 240 else { return nil }
@@ -85,10 +122,9 @@ final class JohanWatchCompareModel: ObservableObject {
         }
     }
 
-    private func watchHRV(from: Date, to: Date) async -> [JohanWatchCompare.HRVReading] {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { return [] }
+    private static func hrv(_ samples: [HKSample]) -> [JohanWatchCompare.HRVReading] {
         let ms = HKUnit.secondUnit(with: .milli)
-        return await samples(type, from: from, to: to).compactMap { s in
+        return samples.compactMap { s in
             guard let q = s as? HKQuantitySample else { return nil }
             let v = q.quantity.doubleValue(for: ms)
             guard v.isFinite, v > 0 else { return nil }
@@ -98,9 +134,8 @@ final class JohanWatchCompareModel: ObservableObject {
     }
 
     /// Blood oxygen readings, percent (HealthKit stores 0…1).
-    private func watchSpO2(from: Date, to: Date) async -> [(ts: Int, pct: Double)] {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return [] }
-        return await samples(type, from: from, to: to).compactMap { s in
+    private static func spo2(_ samples: [HKSample]) -> [(ts: Int, pct: Double)] {
+        samples.compactMap { s in
             guard let q = s as? HKQuantitySample else { return nil }
             let pct = q.quantity.doubleValue(for: .percent()) * 100
             guard pct.isFinite else { return nil }
@@ -108,10 +143,9 @@ final class JohanWatchCompareModel: ObservableObject {
         }
     }
 
-    private func watchAsleep(from: Date, to: Date) async -> [(start: Int, end: Int)] {
-        guard let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return [] }
+    private static func asleep(_ samples: [HKSample]) -> [(start: Int, end: Int)] {
         let asleep = Set(HKCategoryValueSleepAnalysis.allAsleepValues.map(\.rawValue))
-        return await samples(type, from: from, to: to).compactMap { s in
+        return samples.compactMap { s in
             guard let c = s as? HKCategorySample, asleep.contains(c.value) else { return nil }
             return (Int(c.startDate.timeIntervalSince1970), Int(c.endDate.timeIntervalSince1970))
         }
@@ -122,6 +156,7 @@ final class JohanWatchCompareModel: ObservableObject {
 /// far its heart rate and HRV sit from the Apple Watch worn the same night.
 struct JohanWatchCompareView: View {
     @EnvironmentObject private var repo: Repository
+    @EnvironmentObject private var health: HealthKitBridge
     @Environment(\.johanReloadTick) private var reloadTick
     @StateObject private var model = JohanWatchCompareModel()
 
@@ -131,7 +166,7 @@ struct JohanWatchCompareView: View {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
             } else {
                 summaryCard
-                if model.summary.nightsBoth == 0 { emptyHint }
+                if let gap = model.gap { gapHint(gap) }
                 spo2Card
                 JohanOverline(String(localized: "Nights")).padding(.top, 8)
                 ForEach(model.nights.reversed(), id: \.night) { nightCard($0) }
@@ -202,10 +237,60 @@ struct JohanWatchCompareView: View {
         return String(localized: "The strap does not follow the Watch so far.")
     }
 
-    private var emptyHint: some View {
+    /// Names the step that left every night without the Watch, instead of only "no night with both".
+    private func gapHint(_ gap: JohanWatchCompare.WatchDataGap) -> some View {
         JohanCard {
-            Text("No night with both devices yet. Wear the Apple Watch with sleep tracking on beside the strap, and the comparison fills in here each morning.")
-                .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+            VStack(alignment: .leading, spacing: 10) {
+                switch gap {
+                case .noReadAccess:
+                    if health.auth == .entitlementMissing {
+                        Text("Apple Health returned nothing from the Watch or any other source. This build is signed without Apple Health access, so it cannot read the Watch at all.")
+                            .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Apple Health returned nothing from the Watch or any other source over the last \(JohanWatchCompareModel.nightCount) nights. NOOP probably has no read access: Health answers a denied read with an empty list, not an error.")
+                            .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Turn it on in Settings → Health → Data Access & Devices → NOOP, and allow reading Heart Rate, Heart Rate Variability, Sleep and Blood Oxygen.")
+                            .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            Task {
+                                await health.requestAuthorization()
+                                await model.load(repo: repo)
+                            }
+                        } label: {
+                            Label("Ask for Health access", systemImage: "heart.fill")
+                                .font(.system(.subheadline, weight: .semibold))
+                                .foregroundStyle(JohanTheme.background)
+                                .frame(maxWidth: .infinity).padding(.vertical, 11)
+                                .background(Capsule().fill(JohanTheme.strainBlue))
+                        }
+                        .buttonStyle(JohanPressStyle())
+                        Text("Health shows its sheet only for types not yet decided. If nothing appears, use Settings.")
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                case .noWatchSamples(let sources):
+                    Text("Apple Health has heart rate, HRV, sleep or blood oxygen from other sources, but none recorded on an Apple Watch, so every night stays without the Watch.")
+                        .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !sources.isEmpty {
+                        Text("Sources seen")
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                        ForEach(sources, id: \.self) { label in
+                            line("applewatch", label, tint: JohanTheme.textTertiary)
+                        }
+                    }
+                    Text("A sample counts as the Watch's when its product type starts with \"Watch\" or its device model is \"Watch\".")
+                        .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .noOverlap:
+                    Text("No night with both devices yet. Wear the Apple Watch with sleep tracking on beside the strap, and the comparison fills in here each morning.")
+                        .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

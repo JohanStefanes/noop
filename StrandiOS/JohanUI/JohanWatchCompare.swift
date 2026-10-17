@@ -253,6 +253,74 @@ enum JohanWatchCompare {
         return sxy / (sxx * syy).squareRoot()
     }
 
+    // MARK: Why no night has both
+
+    /// What one Health sample type returned over the loaded range, at each step of the Watch filter.
+    struct SampleCount: Equatable {
+        /// Everything the query returned, NOOP's own write-backs included.
+        var total = 0
+        /// Written by any source other than NOOP. HealthKit always returns an app's own samples, even with
+        /// read access denied, so only these say anything about read access.
+        var foreign = 0
+        /// Recorded on an Apple Watch: what the comparison uses.
+        var watch = 0
+    }
+
+    /// The four Health types the comparison reads, counted over the whole loaded range.
+    struct SourceTally: Equatable {
+        var heartRate = SampleCount()
+        var hrv = SampleCount()
+        var spo2 = SampleCount()
+        var sleep = SampleCount()
+        /// Distinct labels of the foreign samples the Watch filter dropped, from `sourceLabel`.
+        var droppedSources: [String] = []
+
+        var all: [SampleCount] { [heartRate, hrv, spo2, sleep] }
+    }
+
+    /// Why the screen has no night with both devices, as far as the counts can attribute it.
+    enum WatchDataGap: Equatable {
+        /// Health returned no sample from any other source for any of the four types. A denied read looks
+        /// exactly like this, since HealthKit answers it with an empty result rather than an error; so does
+        /// a Health database with nothing in it, which is why the screen says "probably".
+        case noReadAccess
+        /// Other sources wrote samples, but none was recorded on an Apple Watch.
+        case noWatchSamples(sources: [String])
+        /// Watch samples exist, but none falls in a night the strap also recorded.
+        case noOverlap
+    }
+
+    /// nil once at least one night has both devices: the screen then has nothing to explain.
+    static func diagnose(_ tally: SourceTally, nightsBoth: Int) -> WatchDataGap? {
+        guard nightsBoth == 0 else { return nil }
+        if tally.all.allSatisfy({ $0.foreign == 0 }) { return .noReadAccess }
+        if tally.all.allSatisfy({ $0.watch == 0 }) { return .noWatchSamples(sources: tally.droppedSources) }
+        return .noOverlap
+    }
+
+    /// Most dropped-source labels the screen lists; the rest only matter in a count.
+    static let maxDroppedSources = 8
+
+    /// "Name · product · model" for one sample's source, without the parts HealthKit left empty, so the
+    /// Watch filter's inputs (`productType` prefix "Watch", or device model "Watch") can be checked by eye.
+    static func sourceLabel(name: String, productType: String?, deviceModel: String?) -> String {
+        var parts = [name.trimmingCharacters(in: .whitespaces)]
+        for p in [productType, deviceModel] {
+            if let p = p?.trimmingCharacters(in: .whitespaces), !p.isEmpty, !parts.contains(p) { parts.append(p) }
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Distinct labels in first-seen order, capped at `maxDroppedSources`.
+    static func distinctSources(_ labels: [String]) -> [String] {
+        var seen = Set<String>(), out: [String] = []
+        for l in labels where !l.isEmpty && seen.insert(l).inserted {
+            out.append(l)
+            if out.count == maxDroppedSources { break }
+        }
+        return out
+    }
+
     // MARK: Helpers
 
     private static func lowerBound(_ xs: [Int], _ x: Int) -> Int {
