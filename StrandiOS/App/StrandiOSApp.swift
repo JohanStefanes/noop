@@ -632,6 +632,9 @@ enum DemoScreens {
         // + self-service pairing guidance, screenshot-able WITHOUT reproducing the bond refusal on real
         // hardware.
         case "bondrefused": return AnyView(BondRefusedDemoScreen())
+        // JohanUI Weekly Review and its story player, over the seeded week.
+        case "week": return AnyView(JohanWeekView())
+        case "weekstory": return AnyView(JohanWeekStoryDemoHost())
         default:         return nil
         }
     }

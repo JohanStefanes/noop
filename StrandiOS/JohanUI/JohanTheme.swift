@@ -187,6 +187,27 @@ enum JohanTheme {
     }
 
     static func number(_ size: CGFloat) -> Font { Fonts.number(size) }
+
+    // MARK: Story (Weekly Review player)
+    /// The full-screen weekly story: loud single-hue slides with black ink, the way a year-in-review
+    /// reads, between black slides with white ink. Every hue is one of the signal colours above, so a
+    /// slide's colour still says which metric it is about.
+    enum Story {
+        /// Ink on a coloured slide; every signal colour clears 5:1 against it.
+        static let ink = Color.black
+        static let inkSecondary = Color.black.opacity(0.68)
+        /// Slow shapes drifting behind the content.
+        static let blob = Color.black.opacity(0.12)
+        static let progressTrack = Color.white.opacity(0.35)
+        static let progressFill = Color.white
+        static let inkProgressTrack = Color.black.opacity(0.22)
+        static let inkProgressFill = Color.black
+        static let sheetRadius: CGFloat = 28
+
+        static let kicker = Font.system(.title3, weight: .semibold)
+        static let headline = Font.system(.largeTitle, design: .rounded, weight: .heavy)
+        static let label = Font.system(.headline, weight: .semibold)
+    }
 }
 
 /// Rounded bold number at `size` points at the default text size, scaled with Dynamic Type relative to

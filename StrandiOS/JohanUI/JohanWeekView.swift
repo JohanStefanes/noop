@@ -6,7 +6,8 @@ import WhoopStore
 
 /// One Monday-to-Sunday week from the stored daily rows: the averages beside the week before, and the
 /// best and worst day by recovery. Days come from `Repository.days` as they are; nothing is re-scored.
-struct JohanWeekReview: Equatable {
+struct JohanWeekReview: Equatable, Identifiable {
+    var id: String { weekStart }
     struct Day: Equatable {
         let key: String
         let recovery: Double?
@@ -67,6 +68,7 @@ struct JohanWeekView: View {
     /// 0 = this week, 1 = last week, ...
     @State private var weeksBack = 0
     @State private var review: JohanWeekReview?
+    @State private var playing: JohanWeekReview?
 
     private var weekStart: String {
         let today = Repository.logicalDayKey(Date())
@@ -84,6 +86,7 @@ struct JohanWeekView: View {
                             .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                     }
                 } else {
+                    JohanWeekStoryCover(review: review, weekTitle: weekTitle) { playing = review }
                     averagesCard(review)
                     recoveryBars(review)
                     if let best = review.best { dayCard(String(localized: "Best day"), best) }
@@ -95,6 +98,13 @@ struct JohanWeekView: View {
         }
         .task(id: "\(weeksBack)|\(reloadTick)") { review = JohanWeekReview.build(rows: repo.days, weekStart: weekStart) }
         .onReceive(repo.$days.dropFirst()) { rows in review = JohanWeekReview.build(rows: rows, weekStart: weekStart) }
+        .fullScreenCover(item: $playing) { JohanWeekStoryView(review: $0, weekTitle: weekTitle) }
+    }
+
+    private var weekTitle: String {
+        weeksBack == 0 ? String(localized: "This week")
+            : weeksBack == 1 ? String(localized: "Last week")
+                             : String(localized: "\(weeksBack) weeks ago")
     }
 
     // MARK: Parts
@@ -105,9 +115,7 @@ struct JohanWeekView: View {
                 .accessibilityLabel(Text("Previous week"))
             Spacer()
             VStack(spacing: 2) {
-                Text(weeksBack == 0 ? String(localized: "This week")
-                                    : weeksBack == 1 ? String(localized: "Last week")
-                                                     : String(localized: "\(weeksBack) weeks ago"))
+                Text(weekTitle)
                     .font(JohanTheme.Fonts.title)
                 Text(Self.range(weekStart)).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
             }
@@ -215,7 +223,7 @@ struct JohanWeekView: View {
 
     // MARK: Formatting
 
-    private static func hours(_ minutes: Double) -> String {
+    static func hours(_ minutes: Double) -> String {
         let m = Int(minutes.rounded())
         return "\(m / 60):" + String(format: "%02d", m % 60)
     }
@@ -225,13 +233,13 @@ struct JohanWeekView: View {
         return Calendar.current.date(from: DateComponents(year: y, month: m, day: d, hour: 12))
     }
 
-    private static func weekday(_ key: String, short: Bool) -> String {
+    static func weekday(_ key: String, short: Bool) -> String {
         guard let date = date(key) else { return key }
         let style = Date.FormatStyle(locale: AppLanguage.activeLocale)
         return date.formatted(short ? style.weekday(.abbreviated) : style.weekday(.wide))
     }
 
-    private static func range(_ start: String) -> String {
+    static func range(_ start: String) -> String {
         guard let a = date(start), let b = date(WeeklyDigestEngine.addDays(start, 6)) else { return start }
         let style = Date.FormatStyle(locale: AppLanguage.activeLocale).day().month(.abbreviated)
         return a.formatted(style) + " – " + b.formatted(style)

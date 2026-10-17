@@ -40,6 +40,14 @@ extension JohanTheme {
         static let barGrow = Animation.spring(response: 0.6, dampingFraction: 0.78)
         static let barStagger: Double = 0.05
         static let hypnogramReveal = Animation.easeOut(duration: 1.2)
+        // Weekly story
+        static let storySlide: Double = 6
+        static let storyStep = Animation.spring(response: 0.45, dampingFraction: 0.88)
+        static let storyRise = Animation.spring(response: 0.6, dampingFraction: 0.8)
+        static let storyRiseStep: Double = 0.18
+        static let storyCount = Animation.easeOut(duration: 1.4)
+        /// A touch held this long pauses the story and hides its chrome; shorter is a tap.
+        static let storyHold: Double = 0.25
     }
 }
 
