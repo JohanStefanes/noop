@@ -426,6 +426,10 @@ public final class LiveState: ObservableObject {
     /// True while the opt-in's preflight read, write or read-back is in flight (disables the control).
     @Published public var liveSecondHrmBusy: Bool = false
 
+    /// True while a 5/MG Broadcast-HR write is being verified (#1061). Shares the 121 read-back with the
+    /// second-HRM opt-in, so a control that starts either disables while the other is in flight.
+    @Published public var broadcastHrBusy: Bool = false
+
     /// Wrist-wear state from WRIST_ON/WRIST_OFF events. Defaults true so wear-gated features work
     /// before the first event arrives; flipped by FrameRouter on a real event.
     @Published public var worn: Bool = true

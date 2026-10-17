@@ -3732,6 +3732,7 @@ public final class BLEManager: NSObject, ObservableObject {
         // flag written yet the strap never advertised 0x180D, with no way to tell "accepted but not
         // advertised" from "write ignored". The 121 read-back settles that, same discipline as the ECG gate.
         broadcastHrGateReport = BroadcastHrGateReport(on: on)
+        state.broadcastHrBusy = true
         log("Broadcast HR: writing \(DeviceConfigWriteGate.broadcastHrKey)='\(DeviceConfigWriteGate.valueString(on: on))' via SET_DEVICE_CONFIG_VALUE(119); the ack is NOT the result — a GET_DEVICE_CONFIG_VALUE(121) read-back follows.")
         send(.setDeviceConfig, payload: payload, writeType: .withResponse)
 
@@ -3758,6 +3759,7 @@ public final class BLEManager: NSObject, ObservableObject {
     private func finishBroadcastHrWrite() {
         guard let report = broadcastHrGateReport else { return }
         broadcastHrGateReport = nil
+        state.broadcastHrBusy = false
         log("Broadcast HR (#1061):\n\(report.render())")
     }
 

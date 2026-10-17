@@ -6,7 +6,8 @@ import WhoopStore
 
 /// "Workout": start a live workout with the strap and follow it while it records. With nothing running
 /// it offers a sport and a Start button; while a workout runs it shows time, heart rate and Effort with
-/// Pause and End. Below either, the latest workouts.
+/// Pause and End. Below either, the WHOOP MG gym-equipment switches (`JohanGymModeCard`) and the latest
+/// workouts.
 ///
 /// Recording is the app's one manual workout (`AppModel.startWorkout` / `endWorkout`), the same session
 /// the original Live screen and a workout mirrored from the watch use, so it can be ended from any of them.
@@ -59,8 +60,9 @@ struct JohanWorkoutView: View {
                 }
             }
             .johanStagger(0)
-            if model.activeWorkout == nil { JohanAutoWorkoutCard(offersSwitch: true).johanStagger(1) }
-            recentCard.johanStagger(2)
+            JohanGymModeCard().johanStagger(1)
+            if model.activeWorkout == nil { JohanAutoWorkoutCard(offersSwitch: true).johanStagger(2) }
+            recentCard.johanStagger(3)
         }
         .sheet(item: $openWorkout) { w in
             NavigationStack { WorkoutDetailView(row: w.row).environmentObject(repo) }

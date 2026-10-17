@@ -635,6 +635,8 @@ enum DemoScreens {
         // JohanUI Weekly Review and its story player, over the seeded week.
         case "week": return AnyView(JohanWeekView())
         case "weekstory": return AnyView(JohanWeekStoryDemoHost())
+        // JohanUI Workout tab with the WHOOP MG gym-equipment card (shown for `-selectedWhoopModel "WHOOP 5.0 / MG"`).
+        case "workout": return AnyView(JohanWorkoutView())
         default:         return nil
         }
     }
