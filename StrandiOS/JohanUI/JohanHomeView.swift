@@ -44,7 +44,9 @@ struct JohanHomeView: View {
             header.johanStagger(0)
             VStack(spacing: gap) {
                 let ringSize = min(260, width * 0.72)
-                ringsHero(s, zone: zone, recColor: recColor, size: ringSize).johanStagger(1)
+                ringsHero(s, zone: zone, recColor: recColor, size: ringSize)
+                    .overlay { ringCentreCalories(s, size: ringSize) }
+                    .johanStagger(1)
                     // Outside the stagger, so the measured centre is the resting one, not the risen-from one.
                     .background { introTargetReader(size: ringSize, recColor: recColor) }
                 statsRow(s, recColor: recColor).johanStagger(2)
@@ -259,6 +261,37 @@ struct JohanHomeView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ringsAccessibilityLabel(s))
         .accessibilityHint(s.recovery == nil ? "" : String(localized: "Shows what shaped your recovery"))
+    }
+
+    /// The day's calories in the hole of the innermost ring, so they read at a glance; opens the Calories
+    /// page. A sibling of the rings' button, not inside it, so each tap reaches its own target. Hidden with
+    /// the rings until the launch intro lands, and absent on a day without a figure.
+    @ViewBuilder
+    private func ringCentreCalories(_ s: JohanHomeModel.Snapshot, size: CGFloat) -> some View {
+        if let c = s.calories {
+            // Inner hole ≈ 0.41 × size (three rings of 0.088 with 0.016 gaps); keep the label inside it.
+            let hole = size * 0.36
+            NavigationLink { JohanCaloriesView() } label: {
+                VStack(spacing: 0) {
+                    CountUpText(value: c.kcal, format: JohanCaloriesView.kcalText, font: JohanTheme.number(size * 0.12),
+                                color: JohanTheme.caloriesOrange, animation: JohanTheme.Motion.countUp)
+                        .id(model.dayOffset)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text("kcal").font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(JohanTheme.textSecondary)
+                }
+                .frame(width: hole, height: hole)
+                .contentShape(Circle())
+            }
+            .buttonStyle(JohanPressStyle())
+            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+            .opacity(introPhase == .done ? 1 : 0)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("Calories"))
+            .accessibilityValue(Text(verbatim: "\(JohanCaloriesView.kcalText(c.kcal)) kcal"))
+            .accessibilityHint(Text("Opens Calories"))
+        }
     }
 
     /// Tells the launch intro where these rings sit and in which colour the recovery ring lands.
