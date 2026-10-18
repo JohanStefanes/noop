@@ -959,9 +959,14 @@ public enum AnalyticsEngine {
         // a later pass re-reads it through the next night window (which ends at ≈ noon). Falls back
         // to the night window for pure-function callers/tests. restingHR still comes from the night's
         // sleep sessions; nil → WorkoutDetector derives it from the day's own HR floor.
+        //
+        // The gravity-derived activity series (a sort + pass over ~86k rows) is built ONCE here and
+        // shared by detection, the strength classification of each bout and the day calorie motion
+        // below; each used to rebuild it from the same `dayGravity ?? gravity`.
+        let dayActivity = WorkoutDetector.activitySeries(dayGravity ?? gravity)
         var detectionFunnel: WorkoutDetector.DetectionFunnel? = nil
         let detectedWorkouts = WorkoutDetector.detect(
-            hr: dayHr ?? hr, gravity: dayGravity ?? gravity,
+            hr: dayHr ?? hr, gravity: dayGravity ?? gravity, activity: dayActivity,
             restingHR: restingHRDaily.map(Double.init),
             // #1545: the DAY's effective HRmax, not just the override. Passing `maxHROverride` meant an
             // install with no override left the detector to fall back to `StrainScorer.estimateHRmax`,
@@ -992,7 +997,8 @@ public enum AnalyticsEngine {
         var strengthWindows = strengthWorkoutWindows
         let workouts: [ExerciseSession] = detectedWorkouts.map { s in
             guard let features = WorkoutTypeFeatureExtractor.extract(
-                hr: dayHr ?? hr, gravity: dayGravity ?? gravity, steps: daySteps ?? steps,
+                hr: dayHr ?? hr, gravity: dayGravity ?? gravity, activity: dayActivity,
+                steps: daySteps ?? steps,
                 start: s.start, end: s.end, restingHR: restingHRDaily.map(Double.init), maxHR: effMaxHR,
                 caloriesKcal: s.caloriesKcal),
                 WorkoutTypeClassifier.classify(features).predictedClass == .strength else { return s }
@@ -1044,8 +1050,7 @@ public enum AnalyticsEngine {
         let dayHrFiltered = (dayHr ?? hr).filter { tsInDay($0.ts) }
         // Motion is derived from the whole read window (so the first in-day delta has a predecessor)
         // and then cut to the same LOCAL day as the HR (#277).
-        let dayMotion = dayHrFiltered.isEmpty ? [] : WorkoutDetector.activitySeries(dayGravity ?? gravity)
-            .filter { tsInDay($0.ts) }
+        let dayMotion = dayHrFiltered.isEmpty ? [] : dayActivity.filter { tsInDay($0.ts) }
         let activeKcalEst: Double? = dayHrFiltered.isEmpty ? nil : Calories.estimateDayCalories(
             dayHrFiltered, profile: profile, hrmax: effMaxHR,
             restingHR: restingHRDaily.map(Double.init),

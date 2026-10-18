@@ -323,6 +323,9 @@ public enum WorkoutTypeFeatureExtractor {
     ///   - gravity: gravity samples covering the window (and a little before, ideally, so the first
     ///     in-window delta isn't a false 0 — matches `WorkoutDetector.activitySeries` behavior either
     ///     way).
+    ///   - activity: `WorkoutDetector.activitySeries(gravity)` when the caller already built it (one
+    ///     build per day instead of one per bout). MUST be that exact series; `gravity` is then not
+    ///     read. nil (the default) derives it here.
     ///   - steps: step/activity-class samples covering the window; may be empty (pre-#316 firmware or
     ///     a WHOOP 4.0) — `tickCoverage` reports 0 and the classifier falls back to HR+motion.
     ///   - start/end: window bounds, unix seconds (inclusive), e.g. an `ExerciseSession`'s.
@@ -331,7 +334,8 @@ public enum WorkoutTypeFeatureExtractor {
     ///   - maxHR: HRmax; nil → `StrainScorer.estimateHRmax` over the window's HR.
     ///   - caloriesKcal: the window's estimated calories (e.g. `ExerciseSession.caloriesKcal`), if
     ///     already computed; nil → `kcalPerMin` is nil.
-    public static func extract(hr: [HRSample], gravity: [GravitySample], steps: [StepSample],
+    public static func extract(hr: [HRSample], gravity: [GravitySample],
+                               activity: [WorkoutDetector.ActivityPoint]? = nil, steps: [StepSample],
                                start: Int, end: Int,
                                restingHR: Double? = nil, maxHR: Double? = nil,
                                caloriesKcal: Double? = nil) -> WorkoutClassFeatures? {
@@ -359,7 +363,7 @@ public enum WorkoutTypeFeatureExtractor {
         }
 
         // Gravity-derived motion shape, via the SAME intensity series WorkoutDetector uses for detection.
-        let intensitySeries = WorkoutDetector.activitySeries(gravity)
+        let intensitySeries = (activity ?? WorkoutDetector.activitySeries(gravity))
             .filter { $0.ts >= start && $0.ts <= end }
             .map { $0.intensity }
         let motionMean = mean(intensitySeries)

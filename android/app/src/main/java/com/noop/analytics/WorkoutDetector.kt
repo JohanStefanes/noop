@@ -404,6 +404,9 @@ object WorkoutDetector {
      *
      * @param hr heart-rate stream (required; empty → []).
      * @param gravity gravity stream (required; empty → []).
+     * @param activity `activitySeries(gravity)` when the caller already built it, so a day that also
+     *   needs the series elsewhere (day calories, bout classification) builds it once. MUST be that
+     *   exact series; `gravity` is then not read. null (the default) derives it here.
      * @param restingHR day resting-HR baseline (bpm). null → derived as the 10th
      *   percentile of the day's HR.
      * @param maxHR HRmax (bpm). null → estimated via StrainScorer.estimateHRmax.
@@ -425,6 +428,7 @@ object WorkoutDetector {
         // caller and test byte-identical — nothing is computed that the detector was not already
         // computing, the counters just record it.
         funnel: ((DetectionFunnel) -> Unit)? = null,
+        activity: List<ActivityPoint>? = null,
     ): List<ExerciseSession> {
         // try/finally (Swift uses `defer`) so the funnel is reported on EVERY exit, including the early
         // returns below. A day that bails at "no motion rows at all" is precisely the day whose report
@@ -432,7 +436,7 @@ object WorkoutDetector {
         val f = DetectionFunnel()
         try {
             val hrSeg = cleanHR(hr)
-            val motion = activitySeries(gravity)
+            val motion = activity ?: activitySeries(gravity)
             f.hrSamples = hrSeg.size
             f.motionSamples = motion.size
             if (hrSeg.isEmpty() || motion.isEmpty()) return emptyList()

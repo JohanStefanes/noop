@@ -881,6 +881,11 @@ object AnalyticsEngine {
         // afternoon/evening workout is caught on its own day rather than lagging until a later pass
         // re-reads it through the next night window (which ends at ≈ noon). Falls back to the night
         // window for pure-function callers/tests.
+        //
+        // The gravity-derived activity series (a sort + pass over ~86k rows) is built ONCE here and
+        // shared by detection, the strength classification of each bout and the day calorie motion
+        // below; each used to rebuild it from the same `dayGravity ?: gravity`.
+        val dayActivity = WorkoutDetector.activitySeries(dayGravity ?: gravity)
         var detectionFunnel: WorkoutDetector.DetectionFunnel? = null
         val detectedWorkouts = WorkoutDetector.detect(
             hr = dayHr ?: hr,
@@ -906,6 +911,7 @@ object AnalyticsEngine {
             // the day it sits inside, which is a worse inconsistency than either method.
             effortMethod = effortMethod,
             funnel = { detectionFunnel = it },
+            activity = dayActivity,
         )
 
         // Strength sessions: a detected bout the coarse classifier labels STRENGTH has its Keytel
@@ -918,6 +924,7 @@ object AnalyticsEngine {
                 hr = dayHr ?: hr, gravity = dayGravity ?: gravity, steps = daySteps ?: steps,
                 start = s.start, end = s.end, restingHR = restingHRDaily?.toDouble(), maxHR = effMaxHR,
                 caloriesKcal = s.caloriesKcal,
+                activity = dayActivity,
             )
             if (features == null ||
                 WorkoutTypeClassifier.classify(features).predictedClass != CoarseWorkoutClass.STRENGTH
@@ -974,7 +981,7 @@ object AnalyticsEngine {
         // Motion is derived from the whole read window (so the first in-day delta has a predecessor)
         // and then cut to the same LOCAL day as the HR (#277).
         val dayMotion = if (dayHrFiltered.isEmpty()) emptyList()
-        else WorkoutDetector.activitySeries(dayGravity ?: gravity).filter { tsInDay(it.ts) }
+        else dayActivity.filter { tsInDay(it.ts) }
         val activeKcalEst: Double? = if (dayHrFiltered.isEmpty()) {
             null
         } else {

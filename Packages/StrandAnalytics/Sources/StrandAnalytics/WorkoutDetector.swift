@@ -414,6 +414,9 @@ public enum WorkoutDetector {
     /// - Parameters:
     ///   - hr: heart-rate stream (required; empty → []).
     ///   - gravity: gravity stream (required; empty → []).
+    ///   - activity: `activitySeries(gravity)` when the caller already built it, so a day that also
+    ///     needs the series elsewhere (day calories, bout classification) builds it once. MUST be that
+    ///     exact series; `gravity` is then not read. nil (the default) derives it here.
     ///   - restingHR: day resting-HR baseline (bpm). nil → derived as the 10th
     ///     percentile of the day's HR.
     ///   - maxHR: HRmax (bpm). nil → estimated via StrainScorer.estimateHRmax.
@@ -421,6 +424,7 @@ public enum WorkoutDetector {
     ///   - profile: when provided, per-bout calories are estimated.
     public static func detect(hr: [HRSample],
                               gravity: [GravitySample],
+                              activity: [ActivityPoint]? = nil,
                               restingHR: Double? = nil,
                               maxHR: Double? = nil,
                               age: Double? = nil,
@@ -441,7 +445,7 @@ public enum WorkoutDetector {
         defer { funnel?(f) }
 
         let hrSeg = cleanHR(hr)
-        let motion = activitySeries(gravity)
+        let motion = activity ?? activitySeries(gravity)
         f.hrSamples = hrSeg.count
         f.motionSamples = motion.count
         if hrSeg.isEmpty || motion.isEmpty { return [] }

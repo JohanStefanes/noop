@@ -374,6 +374,9 @@ object WorkoutTypeFeatureExtractor {
      * @param maxHR HRmax; null → [StrainScorer.estimateHRmax] over the window's HR.
      * @param caloriesKcal the window's estimated calories, if already computed; null → `kcalPerMin`
      *   is null.
+     * @param activity `WorkoutDetector.activitySeries(gravity)` when the caller already built it (one
+     *   build per day instead of one per bout). MUST be that exact series; `gravity` is then not read.
+     *   null (the default) derives it here.
      */
     fun extract(
         hr: List<HrSample>,
@@ -384,6 +387,7 @@ object WorkoutTypeFeatureExtractor {
         restingHR: Double? = null,
         maxHR: Double? = null,
         caloriesKcal: Double? = null,
+        activity: List<ActivityPoint>? = null,
     ): WorkoutClassFeatures? {
         if (end <= start) return null
         val hrWindow = hr.filter { it.ts in start..end }.sortedBy { it.ts }
@@ -406,7 +410,7 @@ object WorkoutTypeFeatureExtractor {
         }
 
         // Gravity-derived motion shape, via the SAME intensity series WorkoutDetector uses for detection.
-        val intensitySeries = WorkoutDetector.activitySeries(gravity)
+        val intensitySeries = (activity ?: WorkoutDetector.activitySeries(gravity))
             .filter { it.ts in start..end }
             .map { it.intensity }
         val motionMean = mean(intensitySeries)
