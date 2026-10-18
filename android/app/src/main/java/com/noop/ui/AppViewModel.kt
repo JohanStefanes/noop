@@ -1798,15 +1798,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             StrainScorer.strain(samples, maxHR = profileStore.hrMax.toDouble(),
                 restingHR = restingHR, method = NoopPrefs.effortMethod(appContext),
                 sex = profileStore.sex) else null
-        // Estimate calories from the captured HR window (same Keytel/Harris–Benedict model the
+        // Estimate calories from the captured HR window (same Keytel/Mifflin–St Jeor model the
         // auto-detector uses) so a manual session shows energy too, not just duration/strain. (#117)
         val energyKcal = if (samples.size >= 2)
             // #983: same measured resting HR as the strain above, not null. The calories model's
             // active-vs-resting threshold sits at resting + 30% HRR, so the default silently shifts what
             // counts as active — and #972 already threads it in the rescore path, so leaving it null here
             // meant a saved workout's kcal disagreed with its own re-score just as its Effort did.
-            Calories.estimateBoutCalories(samples, currentProfile(), profileStore.hrMax.toDouble(), restingHR)
-                .first.takeIf { it > 0 }
+            // A strength session's Keytel rate is damped ([Calories.strengthKeytelFactor]).
+            Calories.estimateBoutCalories(
+                samples, currentProfile(), profileStore.hrMax.toDouble(), restingHR,
+                strength = Calories.isStrengthSport(w.sport.name),
+            ).first.takeIf { it > 0 }
         else null
         val row = WorkoutRow(
             deviceId = deviceId, startTs = w.startMs / 1000, endTs = endMs / 1000,

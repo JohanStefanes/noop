@@ -49,6 +49,9 @@ public enum ManualWorkoutRescore {
     /// measured resting yet), so existing callers are byte-identical until they thread one.
     public static func scored(windowSamples: [HRSample], profile: UserProfile, hrMax: Double,
                               restingHR: Double? = nil,
+                              // The row's sport: a strength session is scored with the damped Keytel
+                              // rate, as at save time. nil scores as before.
+                              sport: String? = nil,
                               // #1545: see WorkoutDetector.detect — Edwards by default, threaded by the app.
                               effortMethod: StrainScorer.Method = .edwards) -> Scored? {
         guard windowSamples.count >= 2 else { return nil }
@@ -59,7 +62,8 @@ public enum ManualWorkoutRescore {
                                          restingHR: restingHR ?? StrainScorer.defaultRestingHR,
                                          method: effortMethod, sex: profile.sex)
         let kcalRaw = Calories.estimateBoutCalories(windowSamples, profile: profile,
-                                                    hrmax: hrMax, restingHR: restingHR).0
+                                                    hrmax: hrMax, restingHR: restingHR,
+                                                    strength: Calories.isStrengthSport(sport)).0
         return Scored(avgHr: avg, maxHr: peak, strain: strain, kcal: kcalRaw > 0 ? kcalRaw : nil)
     }
 

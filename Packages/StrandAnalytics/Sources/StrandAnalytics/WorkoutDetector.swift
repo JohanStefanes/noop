@@ -11,8 +11,8 @@ import WhoopStore
 // MOTION_THRESHOLD). Both gates must hold for a sample to count as active.
 //
 // Per detected bout: avg/peak HR, duration, Edwards zone time-%, mean %HRR,
-// strain (StrainScorer), and estimated calories (Keytel 2005 active + revised
-// Harris–Benedict BMR resting, age/sex/weight/height adjusted).
+// strain (StrainScorer), and estimated calories (Keytel 2005 active + Mifflin–St Jeor
+// BMR resting, age/sex/weight/height adjusted; strength bouts damped).
 //
 // All intensity/energy outputs are APPROXIMATE and not medical advice.
 
@@ -111,6 +111,7 @@ public enum WorkoutDetector {
     public struct ActivityPoint: Equatable, Sendable {
         public let ts: Int
         public let intensity: Double
+        public init(ts: Int, intensity: Double) { self.ts = ts; self.intensity = intensity }
     }
 
     /// Per-record motion-intensity series: L2 magnitude of the gravity change vs
@@ -562,6 +563,27 @@ public enum WorkoutDetector {
         return sessions
     }
 
+    /// `session` with its calories re-estimated as a strength bout (`Calories.strengthKeytelFactor`).
+    /// Same HR window, HRmax and resting HR `detect` scored it with: `hr` is the `detect` input and
+    /// `restingHR` the value passed to it (nil → the same derived floor). No profile, nothing to damp.
+    /// Kotlin twin WorkoutDetector.strengthRescored.
+    public static func strengthRescored(_ session: ExerciseSession, hr: [HRSample], restingHR: Double?,
+                                        profile: UserProfile?) -> ExerciseSession {
+        guard let profile, session.caloriesKcal != nil else { return session }
+        let hrSeg = cleanHR(hr)
+        guard !hrSeg.isEmpty else { return session }
+        let restHR = restingHR ?? deriveRestingHR(hrSeg)
+        let window = hrSeg.filter { $0.ts >= session.start && $0.ts <= session.end }
+            .map { HRSample(ts: $0.ts, bpm: Int($0.bpm.rounded())) }
+        let (kcal, kj) = Calories.estimateBoutCalories(window, profile: profile, hrmax: session.hrmax,
+                                                       restingHR: restHR, strength: true)
+        return ExerciseSession(
+            start: session.start, end: session.end, avgHR: session.avgHR, peakHR: session.peakHR,
+            strain: session.strain, durationS: session.durationS, zoneTimePct: session.zoneTimePct,
+            avgHRRPct: session.avgHRRPct, hrmax: session.hrmax, hrmaxSource: session.hrmaxSource,
+            caloriesKcal: kcal, caloriesKJ: kj, hrCoveragePct: session.hrCoveragePct)
+    }
+
     /// #510: backfill ONLY the avgHr/maxHr/energyKcal/strain fields `real` doesn't already have, from a
     /// detected bout's own computed values — never touching a field that's already present, whether
     /// typed by the user, imported, or filled by an earlier pass. `real` unchanged (`==`) means no
@@ -582,7 +604,8 @@ public enum WorkoutDetector {
 
 // MARK: - Calories (calories.py)
 
-/// HR-based calorie estimation (Keytel 2005 active + revised Harris–Benedict BMR).
+/// HR- and motion-based calorie estimation (Keytel 2005 active, a Brage 2004-style branched HR + motion
+/// blend for the whole day, Mifflin–St Jeor BMR).
 /// APPROXIMATE — not laboratory calorimetry, not medical advice.
 public enum Calories {
 
@@ -598,9 +621,11 @@ public enum Calories {
     }
 
     struct Coeffs {
+        // Mifflin–St Jeor BMR (kcal/day) = alpha + weight·W + height·H − age·A
+        // (Mifflin et al. 1990, Am. J. Clin. Nutr. 51(2)): 10·kg + 6.25·cm − 5·years, +5 male / −161 female.
         let restingAlpha: Double
         let restingWeight: Double
-        let restingHeight: Double  // applied to height in METRES
+        let restingHeight: Double  // applied to height in METRES (6.25 per cm = 625 per m)
         let restingAge: Double
         // Keytel 2005 base (fitness-blind) active model: EE(kJ/min) = alpha + hr·HR + wt·W + age·A.
         let workoutHR: Double
@@ -618,19 +643,19 @@ public enum Calories {
         let fitAlpha: Double
     }
 
-    static let male = Coeffs(restingAlpha: 88.362, restingWeight: 13.397, restingHeight: 479.9,
-                             restingAge: 5.677, workoutHR: 0.6309, workoutWeight: 0.1988,
+    static let male = Coeffs(restingAlpha: 5.0, restingWeight: 10.0, restingHeight: 625.0,
+                             restingAge: 5.0, workoutHR: 0.6309, workoutWeight: 0.1988,
                              workoutAge: 0.2017, workoutAlpha: -55.0969,
                              fitHR: 0.634, fitVO2: 0.404, fitWeight: 0.394, fitAge: 0.271,
                              fitAlpha: -95.7735)
-    static let female = Coeffs(restingAlpha: 447.593, restingWeight: 9.247, restingHeight: 309.8,
-                               restingAge: 4.33, workoutHR: 0.4472, workoutWeight: -0.1263,
+    static let female = Coeffs(restingAlpha: -161.0, restingWeight: 10.0, restingHeight: 625.0,
+                               restingAge: 5.0, workoutHR: 0.4472, workoutWeight: -0.1263,
                                workoutAge: 0.0740, workoutAlpha: -20.4022,
                                fitHR: 0.450, fitVO2: 0.380, fitWeight: 0.103, fitAge: 0.274,
                                fitAlpha: -59.3954)
     // Nonbinary = the male/female midpoint, the same convention the base workout* coeffs use.
-    static let nonbinary = Coeffs(restingAlpha: 267.9775, restingWeight: 11.322, restingHeight: 394.85,
-                                  restingAge: 5.0035, workoutHR: 0.53905, workoutWeight: 0.03625,
+    static let nonbinary = Coeffs(restingAlpha: -78.0, restingWeight: 10.0, restingHeight: 625.0,
+                                  restingAge: 5.0, workoutHR: 0.53905, workoutWeight: 0.03625,
                                   workoutAge: 0.13785, workoutAlpha: -37.74955,
                                   fitHR: 0.542, fitVO2: 0.392, fitWeight: 0.2485, fitAge: 0.2725,
                                   fitAlpha: -77.58445)
@@ -653,6 +678,54 @@ public enum Calories {
     static let dayMaxObservedGapS: Double = 60.0
     static let dayMaxObservedSpanS: Double = 86_400.0
     static let workoutDivisor = 251.04  // 60 s/min × 4.184 kJ/kcal
+
+    /// Damping applied to the Keytel gross rate inside a strength session. Keytel 2005 was fitted on
+    /// steady aerobic exercise; in resistance training HR rises out of proportion to oxygen uptake
+    /// (pressor response, isometric holds, short rests), so the HR→EE regression over-reads it.
+    /// ASSUMPTION: 0.7 is a starting value, not fitted. Calibrate against a reference device
+    /// (e.g. the strap-vs-Watch comparison on logged strength sessions) before trusting it.
+    static let strengthKeytelFactor = 0.7
+
+    // Whole-day branched HR + motion model (`estimateDayEnergy` with motion). After Brage et al. 2004
+    // (J. Appl. Physiol. 96(1)): each interval is estimated from heart rate (Keytel) AND from motion
+    // (intensity → MET), and the two are blended by how far each signal is above its resting level.
+    // HR is trusted where motion corroborates it; motion carries the estimate where HR is low (walking,
+    // standing, chores) and where HR is high without movement (stress, caffeine, heat, illness).
+
+    /// Lower %HRR edge of the HR weight ramp; `dayActiveHRRFraction` is the upper edge.
+    /// ASSUMPTION: 20% HRR sits just above the resting band; below it HR carries no weight.
+    static let dayLowHRRFraction = 0.20
+    /// Motion intensity (L2 gravity delta, same scale as `WorkoutDetector.activitySeries`) at or below
+    /// which the wearer counts as still. ASSUMPTION: a quarter of the walk floor, above sensor jitter.
+    static let dayMotionRestIntensity = 0.05
+    /// Intensity → MET anchors, linearly interpolated, flat beyond both ends. MET values from the
+    /// 2011 Compendium of Physical Activities (Ainsworth et al., Med. Sci. Sports Exerc. 43(8)):
+    /// 1.0 = quiet rest; 2.0 ≈ light standing work / light household tasks (codes 05000s, 09000s);
+    /// 3.5 = walking 2.8–3.2 mph on level ground (17200); 7.0 = jogging, general (12020).
+    /// The INTENSITY side is an ASSUMPTION: 0.20 is the repo's walk floor (`motionThreshold`), the
+    /// other points are placed around it, not fitted. Wrist motion saturates, so the top is capped.
+    static let dayMotionMETAnchors: [(intensity: Double, met: Double)] = [
+        (0.05, 1.0), (0.10, 2.0), (0.20, 3.5), (0.60, 7.0),
+    ]
+    /// 1 MET ≈ 1 kcal·kg⁻¹·h⁻¹ (Compendium convention), as kcal·kg⁻¹·s⁻¹.
+    static let kcalPerMETKgS = 1.0 / 3_600.0
+    /// Share of the legacy HR-only estimate kept when HR is high but the wearer is still.
+    /// ASSUMPTION: Brage weights the motion branch here; 0.25 keeps some HR credit because wrist
+    /// motion misses real work (cycling, carrying a load) as well as stress.
+    static let dayStillHRWeight = 0.25
+    /// Minimum share of a motion window that must be covered by ~1 Hz gravity records before motion
+    /// is used for an interval. Below it the interval keeps the HR-only estimate, which is how a
+    /// coarse WHOOP 4.0 motion stream (#345) or a gravity dropout falls back to the old behaviour.
+    /// ASSUMPTION: half the window.
+    static let dayMotionMinCoverage = 0.5
+
+    /// Is this workout sport a strength session? One resolver for every caller (manual save,
+    /// rescore, the day model), the same substrings `SportIcon` uses to pick the dumbbell.
+    public static func isStrengthSport(_ sport: String?) -> Bool {
+        guard let s = sport?.lowercased() else { return false }
+        return s.contains("strength") || s.contains("weight") || s.contains("lift")
+            || s.contains("bodybuilding")
+    }
 
     static func resolveCoeffs(_ sex: String) -> Coeffs {
         switch sex.lowercased() {
@@ -706,10 +779,14 @@ public enum Calories {
     /// continuous active/resting time. The whole-day estimator deliberately does NOT use it
     /// (see `estimateDayCalories`) — its raw, non-gap-filled day HR union would otherwise
     /// credit up to 150 s of active burn to a single isolated elevated sample.
+    ///
+    /// `strength`: the bout is a strength session (classified or entered as one); its Keytel gross
+    /// rate is damped by `strengthKeytelFactor`, never below the resting rate.
     public static func estimateBoutCalories(_ hrSamples: [HRSample],
                                             profile: UserProfile,
                                             hrmax: Double?,
-                                            restingHR: Double?) -> (Double, Double) {
+                                            restingHR: Double?,
+                                            strength: Bool = false) -> (Double, Double) {
         let weightKg = profile.weightKg > 0 ? profile.weightKg : 70.0
         let heightCm = profile.heightCm > 0 ? profile.heightCm : 170.0
         let age = profile.age > 0 ? profile.age : 30.0
@@ -745,6 +822,9 @@ public enum Calories {
             }
             if bpm < activeThreshold {
                 totalKcal += restingRate * dur
+            } else if strength {
+                let gross = activeKcalPerS(coeffs, hr: bpm, hrmax: effHRmax, weightKg: weightKg, age: age, vo2max: vo2max)
+                totalKcal += max(restingRate, gross * strengthKeytelFactor) * dur
             } else {
                 totalKcal += activeKcalPerS(coeffs, hr: bpm, hrmax: effHRmax, weightKg: weightKg, age: age, vo2max: vo2max) * dur
             }
@@ -770,12 +850,21 @@ public enum Calories {
     /// flat 1 s for a reading on a gappy day, but never a whole disconnect. Thus a 30 s sparse stream
     /// and a 1 Hz stream covering the same activity produce comparable energy.
     ///
-    /// This is an on-device estimate from heart rate alone — NOT laboratory calorimetry, NOT
-    /// Apple/WHOOP cloud parity, NOT medical advice.
+    /// With `motion` (the day's `WorkoutDetector.activitySeries`), each active interval is the branched
+    /// HR + motion blend of `dayActiveRate` instead of the HR-only gate. An interval whose motion window
+    /// is not covered by gravity (`dayMotionMinCoverage`) keeps the HR-only estimate, so an empty
+    /// `motion` reproduces the HR-only day exactly. `strengthWindows` (inclusive unix-second spans of
+    /// strength sessions) damp the Keytel rate inside them by `strengthKeytelFactor`. Resting energy
+    /// is the same in every case.
+    ///
+    /// This is an on-device estimate from heart rate and wrist motion — NOT laboratory calorimetry,
+    /// NOT Apple/WHOOP cloud parity, NOT medical advice.
     public static func estimateDayEnergy(_ hrSamples: [HRSample],
                                          profile: UserProfile,
                                          hrmax: Double?,
-                                         restingHR: Double?) -> DayEnergyEstimate {
+                                         restingHR: Double?,
+                                         motion: [WorkoutDetector.ActivityPoint] = [],
+                                         strengthWindows: [ClosedRange<Int>] = []) -> DayEnergyEstimate {
         if hrSamples.isEmpty {
             return DayEnergyEstimate(restingKcal: 0, activeKcal: 0, observedSeconds: 0)
         }
@@ -820,6 +909,14 @@ public enum Calories {
         })
         let restingKcal = restingRate * observedSeconds
 
+        // Motion sorted once with a running prefix sum, so each interval's mean intensity is two binary
+        // searches. Ties ordered by intensity so both platforms sum in the same order.
+        let motionSorted = motion.sorted { $0.ts != $1.ts ? $0.ts < $1.ts : $0.intensity < $1.intensity }
+        let motionTs = motionSorted.map { Double($0.ts) }
+        var motionPrefix = [0.0]
+        motionPrefix.reserveCapacity(motionSorted.count + 1)
+        for p in motionSorted { motionPrefix.append(motionPrefix[motionPrefix.count - 1] + (p.intensity.isFinite ? p.intensity : 0.0)) }
+
         var activeKcal = 0.0
         for i in ordered.indices {
             let durationS: Double
@@ -836,21 +933,99 @@ public enum Calories {
                 durationS = nominalSampleS
             }
             let bpm = Double(ordered[i].bpm)
-            guard bpm >= activeThreshold else { continue }
-            let grossRate = activeKcalPerS(coeffs, hr: bpm, hrmax: effHRmax,
+            let ts = ordered[i].ts
+            let window = max(durationS, WorkoutDetector.motionSmoothS)
+            let intensity = meanMotion(motionTs, motionPrefix, from: Double(ts), span: window)
+            // Without usable motion the HR-only gate decides alone, exactly as before.
+            if intensity == nil && bpm < activeThreshold { continue }
+            let inStrength = strengthWindows.contains { $0.contains(ts) }
+            var grossRate = activeKcalPerS(coeffs, hr: bpm, hrmax: effHRmax,
                                            weightKg: weightKg, age: age, vo2max: vo2max)
-            activeKcal += max(0.0, grossRate - restingRate) * durationS
+            if inStrength { grossRate *= strengthKeytelFactor }
+            let hrAboveRest = max(0.0, grossRate - restingRate)
+            guard let intensity else {
+                activeKcal += hrAboveRest * durationS
+                continue
+            }
+            let rate = dayActiveRate(bpm: bpm, hrAboveRest: hrAboveRest, intensity: intensity,
+                                     restingHR: effResting, hrmax: effHRmax,
+                                     activeThreshold: activeThreshold, weightKg: weightKg)
+            activeKcal += rate * durationS
         }
         return DayEnergyEstimate(restingKcal: restingKcal, activeKcal: activeKcal,
                                  observedSeconds: observedSeconds)
+    }
+
+    /// Mean motion intensity over [from, from + span), or nil when gravity covers less than
+    /// `dayMotionMinCoverage` of that window at ~1 Hz (no motion, a dropout, or a coarse 4.0 stream).
+    static func meanMotion(_ ts: [Double], _ prefix: [Double], from: Double, span: Double) -> Double? {
+        guard !ts.isEmpty, span > 0 else { return nil }
+        let lo = lowerBound(ts, from)
+        let hi = lowerBound(ts, from + span)
+        let n = hi - lo
+        guard n > 0, Double(n) >= dayMotionMinCoverage * span else { return nil }
+        return (prefix[hi] - prefix[lo]) / Double(n)
+    }
+
+    /// First index whose value is ≥ `x` (`ts` ascending).
+    static func lowerBound(_ ts: [Double], _ x: Double) -> Int {
+        var lo = 0, hi = ts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if ts[mid] < x { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
+
+    /// MET for a motion intensity, linear between `dayMotionMETAnchors`, flat beyond both ends.
+    static func motionMET(_ intensity: Double) -> Double {
+        let a = dayMotionMETAnchors
+        if intensity <= a[0].intensity { return a[0].met }
+        for k in 1..<a.count where intensity <= a[k].intensity {
+            let f = (intensity - a[k - 1].intensity) / (a[k].intensity - a[k - 1].intensity)
+            return a[k - 1].met + f * (a[k].met - a[k - 1].met)
+        }
+        return a[a.count - 1].met
+    }
+
+    /// `x` mapped linearly onto [0, 1] between `lo` and `hi`, clamped.
+    static func ramp(_ x: Double, lo: Double, hi: Double) -> Double {
+        guard hi > lo else { return x >= hi ? 1.0 : 0.0 }
+        return min(1.0, max(0.0, (x - lo) / (hi - lo)))
+    }
+
+    /// Branched HR + motion energy rate above rest (kcal/s) for one interval with motion data.
+    ///
+    ///     m = ramp(intensity, still → walk floor),  h = ramp(%HRR, dayLowHRRFraction → dayActiveHRRFraction)
+    ///     moving = h · HR + (1 − h) · motion           (moving: HR where it is up, motion where it is not)
+    ///     still  = dayStillHRWeight · legacyHR + (1 − dayStillHRWeight) · motion
+    ///     rate   = m · moving + (1 − m) · still
+    ///
+    /// HR = Keytel above rest (already strength-damped by the caller); legacyHR = the same, but only at
+    /// or above the HR-only gate, so a still wearer never gets more than the HR-only model gave.
+    /// Motion = (MET − 1) · kg above rest. Both low gives 0: the interval stays at the resting floor.
+    static func dayActiveRate(bpm: Double, hrAboveRest: Double, intensity: Double,
+                              restingHR: Double, hrmax: Double, activeThreshold: Double,
+                              weightKg: Double) -> Double {
+        let m = ramp(intensity, lo: dayMotionRestIntensity, hi: WorkoutDetector.motionThreshold)
+        let reserve = hrmax - restingHR
+        let hrr = reserve > 0 ? (min(bpm, hrmax) - restingHR) / reserve : (bpm >= activeThreshold ? 1.0 : 0.0)
+        let h = ramp(hrr, lo: dayLowHRRFraction, hi: dayActiveHRRFraction)
+        let motionAboveRest = max(0.0, motionMET(intensity) - 1.0) * weightKg * kcalPerMETKgS
+        let legacyHR = bpm >= activeThreshold ? hrAboveRest : 0.0
+        let moving = h * hrAboveRest + (1.0 - h) * motionAboveRest
+        let still = dayStillHRWeight * legacyHR + (1.0 - dayStillHRWeight) * motionAboveRest
+        return m * moving + (1.0 - m) * still
     }
 
     /// Backward-compatible total-kcal facade for the stored daily metric.
     public static func estimateDayCalories(_ hrSamples: [HRSample],
                                            profile: UserProfile,
                                            hrmax: Double?,
-                                           restingHR: Double?) -> Double {
-        estimateDayEnergy(hrSamples, profile: profile, hrmax: hrmax,
-                          restingHR: restingHR).totalKcal
+                                           restingHR: Double?,
+                                           motion: [WorkoutDetector.ActivityPoint] = [],
+                                           strengthWindows: [ClosedRange<Int>] = []) -> Double {
+        estimateDayEnergy(hrSamples, profile: profile, hrmax: hrmax, restingHR: restingHR,
+                          motion: motion, strengthWindows: strengthWindows).totalKcal
     }
 }

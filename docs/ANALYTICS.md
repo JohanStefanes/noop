@@ -435,7 +435,15 @@ Active samples are grouped into runs (merging gaps < `mergeGapS = 150 s`), then 
 
 ### Calories (`Calories.estimateBoutCalories`)
 
-Per-second blend of **Keytel (2005)** active expenditure and **revised Harris–Benedict** BMR (resting), with sex-specific coefficients (`male` / `female` / `nonbinary`). Below a `RHR + 0.30 × HRR` threshold the resting rate is used; above it, the HR-driven active rate. Returns `(kcal, kJ)`. **Approximate** — not laboratory calorimetry.
+Per-second blend of **Keytel (2005)** active expenditure and **Mifflin–St Jeor (1990)** BMR (resting), with sex-specific coefficients (`male` / `female` / `nonbinary` = midpoint). Below a `RHR + 0.30 × HRR` threshold the resting rate is used; above it, the HR-driven active rate. A strength session (entered as one, or a detected bout `WorkoutTypeClassifier` labels `.strength`) has its Keytel rate multiplied by `strengthKeytelFactor = 0.7` (an assumption, not fitted), never below the resting rate. Returns `(kcal, kJ)`. **Approximate** — not laboratory calorimetry.
+
+### Day calories (`Calories.estimateDayEnergy`)
+
+Resting energy is the Mifflin–St Jeor BMR over the observed seconds (gaps capped at 60 s). Active energy above it follows a branched HR + motion model after **Brage et al. (2004)**: per HR interval, an HR estimate (Keytel above rest) and a motion estimate (mean gravity intensity over the interval → MET from the 2011 Compendium anchors, `(MET − 1) × kg` per hour) are blended with sliding weights — `m` ramps from still (0.05) to the walk floor (0.20), `h` from 20 % to 50 % HRR:
+
+`rate = m · (h · HR + (1 − h) · motion) + (1 − m) · (0.25 · HR_gated + 0.75 · motion)`
+
+So moving with high HR → mostly HR; moving with low HR → mostly motion; high HR while still (stress, caffeine, heat) → mostly motion, keeping a quarter of the old HR-only credit; both low → resting floor. An interval whose motion window is less than half covered by ~1 Hz gravity (no motion stream, a dropout, WHOOP 4.0 coarse motion) keeps the old HR-only rule (`RHR + 0.50 × HRR` gate) unchanged. The intensity→MET placement, the 20 % HRR edge, the 0.25 still-HR share and the 0.5 coverage are assumptions to calibrate against a reference device.
 
 ---
 

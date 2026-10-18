@@ -355,6 +355,11 @@ public enum AnalyticsEngine {
                                   dayHr: [HRSample]? = nil,
                                   daySteps: [StepSample]? = nil,
                                   dayGravity: [GravitySample]? = nil,
+                                  // Inclusive [start, end] spans of the day's ENTERED strength workouts
+                                  // (`Calories.isStrengthSport`). The day calorie model damps Keytel
+                                  // inside them; detected bouts classified as strength are added here.
+                                  // Default empty keeps pure-function callers/tests byte-identical.
+                                  strengthWorkoutWindows: [ClosedRange<Int>] = [],
                                   // Wear-gated nightly skin-temp mean is harvested here
                                   // (baseline-independent); IntelligenceEngine seeds a personal
                                   // baseline from these means across nights and re-derives
@@ -955,7 +960,7 @@ public enum AnalyticsEngine {
         // to the night window for pure-function callers/tests. restingHR still comes from the night's
         // sleep sessions; nil → WorkoutDetector derives it from the day's own HR floor.
         var detectionFunnel: WorkoutDetector.DetectionFunnel? = nil
-        let workouts = WorkoutDetector.detect(
+        let detectedWorkouts = WorkoutDetector.detect(
             hr: dayHr ?? hr, gravity: dayGravity ?? gravity,
             restingHR: restingHRDaily.map(Double.init),
             // #1545: the DAY's effective HRmax, not just the override. Passing `maxHROverride` meant an
@@ -979,6 +984,23 @@ public enum AnalyticsEngine {
             // less than the day it sits inside, which is a worse inconsistency than either method.
             effortMethod: effortMethod,
             funnel: { detectionFunnel = $0 })
+
+        // Strength sessions: a detected bout the coarse classifier labels `.strength` has its Keytel
+        // calories damped (`Calories.strengthKeytelFactor`), and its span joins the entered strength
+        // workouts so the day total is damped over the same seconds. Classified ONCE here, so the bout
+        // and the day cannot disagree about which seconds were strength.
+        var strengthWindows = strengthWorkoutWindows
+        let workouts: [ExerciseSession] = detectedWorkouts.map { s in
+            guard let features = WorkoutTypeFeatureExtractor.extract(
+                hr: dayHr ?? hr, gravity: dayGravity ?? gravity, steps: daySteps ?? steps,
+                start: s.start, end: s.end, restingHR: restingHRDaily.map(Double.init), maxHR: effMaxHR,
+                caloriesKcal: s.caloriesKcal),
+                WorkoutTypeClassifier.classify(features).predictedClass == .strength else { return s }
+            strengthWindows.append(s.start...s.end)
+            return WorkoutDetector.strengthRescored(s, hr: dayHr ?? hr,
+                                                    restingHR: restingHRDaily.map(Double.init),
+                                                    profile: profile)
+        }
 
         // ── Steps (APPROXIMATE) ───────────────────────────────────────────────
         // step_motion_counter@57 is a CUMULATIVE u16 running counter (it climbs while you move, holds
@@ -1006,11 +1028,12 @@ public enum AnalyticsEngine {
             return scaled > 0 ? scaled : nil
         }()
 
-        // ── Daily calories (APPROXIMATE, HR-only whole-day estimate) ──────────
-        // Whole-day active+resting energy from the full HR window, using the same resting/active
-        // per-second model the per-workout estimate uses (resting BMR below activeThreshold, Keytel
-        // active above). effMaxHR + restingHRDaily are the same effective HRmax / resting baseline
-        // strain uses. Nil when there is no HR. A heart-rate ESTIMATE — not cloud/clinical parity.
+        // ── Daily calories (APPROXIMATE, HR + motion whole-day estimate) ──────
+        // Whole-day active+resting energy from the full HR window: Mifflin–St Jeor BMR as the floor,
+        // and above it the branched HR + motion blend (`Calories.estimateDayEnergy`), which falls back
+        // to the HR-only gate for any interval the gravity stream does not cover (a WHOOP 4.0's coarse
+        // motion, a dropout). effMaxHR + restingHRDaily are the same effective HRmax / resting baseline
+        // strain uses. Nil when there is no HR. An ESTIMATE — not cloud/clinical parity.
         // Whole-day additive totals (steps above, calories here) are summed over the full LOCAL
         // calendar day supplied by the caller (dayHr / daySteps), NOT the ~42h sleep-detection
         // window — which, anchored to the current time-of-day, would drop a past day's late hours
@@ -1019,9 +1042,14 @@ public enum AnalyticsEngine {
         // night-window hr for pure-function callers that don't supply dayHr. Strain keeps the full
         // window (bounded log).
         let dayHrFiltered = (dayHr ?? hr).filter { tsInDay($0.ts) }
+        // Motion is derived from the whole read window (so the first in-day delta has a predecessor)
+        // and then cut to the same LOCAL day as the HR (#277).
+        let dayMotion = dayHrFiltered.isEmpty ? [] : WorkoutDetector.activitySeries(dayGravity ?? gravity)
+            .filter { tsInDay($0.ts) }
         let activeKcalEst: Double? = dayHrFiltered.isEmpty ? nil : Calories.estimateDayCalories(
             dayHrFiltered, profile: profile, hrmax: effMaxHR,
-            restingHR: restingHRDaily.map(Double.init))
+            restingHR: restingHRDaily.map(Double.init),
+            motion: dayMotion, strengthWindows: strengthWindows)
 
         // ── Assemble DailyMetric ──────────────────────────────────────────────
         let daily = DailyMetric(

@@ -47,6 +47,9 @@ object ManualWorkoutRescore {
         restingHR: Double? = null,
         // #1545: see WorkoutDetector.detect — EDWARDS by default, threaded by the app.
         effortMethod: StrainScorer.Method = StrainScorer.Method.EDWARDS,
+        // The row's sport: a strength session is scored with the damped Keytel rate, as at save time.
+        // null scores as before.
+        sport: String? = null,
     ): Scored? {
         if (windowSamples.size < 2) return null
         val bpms = windowSamples.map { it.bpm }
@@ -59,7 +62,9 @@ object ManualWorkoutRescore {
             restingHR = restingHR ?: StrainScorer.defaultRestingHR,
             method = effortMethod, sex = profile.sex,
         )
-        val kcalRaw = Calories.estimateBoutCalories(windowSamples, profile, hrMax, restingHR).first
+        val kcalRaw = Calories.estimateBoutCalories(
+            windowSamples, profile, hrMax, restingHR, strength = Calories.isStrengthSport(sport),
+        ).first
         return Scored(avg, peak, strain, if (kcalRaw > 0) kcalRaw else null)
     }
 

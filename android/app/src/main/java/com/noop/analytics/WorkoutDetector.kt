@@ -19,8 +19,8 @@ import kotlin.math.sqrt
  * MOTION_THRESHOLD). Both gates must hold for a sample to count as active.
  *
  * Per detected bout: avg/peak HR, duration, Edwards zone time-%, mean %HRR,
- * strain (StrainScorer), and estimated calories (Keytel 2005 active + revised
- * Harris–Benedict BMR resting, age/sex/weight/height adjusted).
+ * strain (StrainScorer), and estimated calories (Keytel 2005 active + Mifflin–St Jeor
+ * BMR resting, age/sex/weight/height adjusted; strength bouts damped).
  *
  * All intensity/energy outputs are APPROXIMATE and not medical advice.
  *
@@ -576,10 +576,32 @@ object WorkoutDetector {
             funnel?.invoke(f)
         }
     }
+
+    /**
+     * [session] with its calories re-estimated as a strength bout ([Calories.strengthKeytelFactor]).
+     * Same HR window, HRmax and resting HR [detect] scored it with: [hr] is the [detect] input and
+     * [restingHR] the value passed to it (null → the same derived floor). No profile, nothing to damp.
+     * Swift twin `WorkoutDetector.strengthRescored`.
+     */
+    fun strengthRescored(
+        session: ExerciseSession,
+        hr: List<HrSample>,
+        restingHR: Double?,
+        profile: UserProfile?,
+    ): ExerciseSession {
+        if (profile == null || session.caloriesKcal == null) return session
+        val hrSeg = cleanHR(hr)
+        if (hrSeg.isEmpty()) return session
+        val restHR = restingHR ?: deriveRestingHR(hrSeg)
+        val window = hrSeg.filter { it.ts in session.start..session.end }
+        val (kcal, kj) = Calories.estimateBoutCalories(window, profile, session.hrmax, restHR, strength = true)
+        return session.copy(caloriesKcal = kcal, caloriesKJ = kj)
+    }
 }
 
 /**
- * HR-based calorie estimation (Keytel 2005 active + revised Harris–Benedict BMR).
+ * HR- and motion-based calorie estimation (Keytel 2005 active, a Brage 2004-style branched HR + motion
+ * blend for the whole day, Mifflin–St Jeor BMR).
  * APPROXIMATE — not laboratory calorimetry, not medical advice.
  *
  * Faithful port of the `Calories` enum that ships inside WorkoutDetector.swift.
@@ -597,9 +619,11 @@ object Calories {
 
     /** Sex-specific BMR + active-EE coefficients. Mirrors Swift `Calories.Coeffs`. */
     data class Coeffs(
+        // Mifflin–St Jeor BMR (kcal/day) = alpha + weight·W + height·H − age·A
+        // (Mifflin et al. 1990, Am. J. Clin. Nutr. 51(2)): 10·kg + 6.25·cm − 5·years, +5 male / −161 female.
         val restingAlpha: Double,
         val restingWeight: Double,
-        /** Applied to height in METRES. */
+        /** Applied to height in METRES (6.25 per cm = 625 per m). */
         val restingHeight: Double,
         val restingAge: Double,
         // Keytel 2005 base (fitness-blind) active model: EE(kJ/min) = alpha + hr·HR + wt·W + age·A.
@@ -619,21 +643,21 @@ object Calories {
     )
 
     val male = Coeffs(
-        restingAlpha = 88.362, restingWeight = 13.397, restingHeight = 479.9,
-        restingAge = 5.677, workoutHR = 0.6309, workoutWeight = 0.1988,
+        restingAlpha = 5.0, restingWeight = 10.0, restingHeight = 625.0,
+        restingAge = 5.0, workoutHR = 0.6309, workoutWeight = 0.1988,
         workoutAge = 0.2017, workoutAlpha = -55.0969,
         fitHR = 0.634, fitVO2 = 0.404, fitWeight = 0.394, fitAge = 0.271, fitAlpha = -95.7735,
     )
     val female = Coeffs(
-        restingAlpha = 447.593, restingWeight = 9.247, restingHeight = 309.8,
-        restingAge = 4.33, workoutHR = 0.4472, workoutWeight = -0.1263,
+        restingAlpha = -161.0, restingWeight = 10.0, restingHeight = 625.0,
+        restingAge = 5.0, workoutHR = 0.4472, workoutWeight = -0.1263,
         workoutAge = 0.0740, workoutAlpha = -20.4022,
         fitHR = 0.450, fitVO2 = 0.380, fitWeight = 0.103, fitAge = 0.274, fitAlpha = -59.3954,
     )
     // Nonbinary = the male/female midpoint, the same convention the base workout* coeffs use.
     val nonbinary = Coeffs(
-        restingAlpha = 267.9775, restingWeight = 11.322, restingHeight = 394.85,
-        restingAge = 5.0035, workoutHR = 0.53905, workoutWeight = 0.03625,
+        restingAlpha = -78.0, restingWeight = 10.0, restingHeight = 625.0,
+        restingAge = 5.0, workoutHR = 0.53905, workoutWeight = 0.03625,
         workoutAge = 0.13785, workoutAlpha = -37.74955,
         fitHR = 0.542, fitVO2 = 0.392, fitWeight = 0.2485, fitAge = 0.2725, fitAlpha = -77.58445,
     )
@@ -661,6 +685,68 @@ object Calories {
     const val dayMaxObservedGapS: Double = 60.0
     const val dayMaxObservedSpanS: Double = 86_400.0
     const val workoutDivisor: Double = 251.04 // 60 s/min × 4.184 kJ/kcal
+
+    /**
+     * Damping applied to the Keytel gross rate inside a strength session. Keytel 2005 was fitted on
+     * steady aerobic exercise; in resistance training HR rises out of proportion to oxygen uptake
+     * (pressor response, isometric holds, short rests), so the HR→EE regression over-reads it.
+     * ASSUMPTION: 0.7 is a starting value, not fitted. Calibrate against a reference device
+     * (e.g. the strap-vs-Watch comparison on logged strength sessions) before trusting it.
+     */
+    const val strengthKeytelFactor: Double = 0.7
+
+    // Whole-day branched HR + motion model ([estimateDayEnergy] with motion). After Brage et al. 2004
+    // (J. Appl. Physiol. 96(1)): each interval is estimated from heart rate (Keytel) AND from motion
+    // (intensity → MET), and the two are blended by how far each signal is above its resting level.
+    // HR is trusted where motion corroborates it; motion carries the estimate where HR is low (walking,
+    // standing, chores) and where HR is high without movement (stress, caffeine, heat, illness).
+
+    /**
+     * Lower %HRR edge of the HR weight ramp; [dayActiveHRRFraction] is the upper edge.
+     * ASSUMPTION: 20% HRR sits just above the resting band; below it HR carries no weight.
+     */
+    const val dayLowHRRFraction: Double = 0.20
+    /**
+     * Motion intensity (L2 gravity delta, same scale as [WorkoutDetector.activitySeries]) at or below
+     * which the wearer counts as still. ASSUMPTION: a quarter of the walk floor, above sensor jitter.
+     */
+    const val dayMotionRestIntensity: Double = 0.05
+    /**
+     * Intensity → MET anchors, linearly interpolated, flat beyond both ends. MET values from the
+     * 2011 Compendium of Physical Activities (Ainsworth et al., Med. Sci. Sports Exerc. 43(8)):
+     * 1.0 = quiet rest; 2.0 ≈ light standing work / light household tasks (codes 05000s, 09000s);
+     * 3.5 = walking 2.8–3.2 mph on level ground (17200); 7.0 = jogging, general (12020).
+     * The INTENSITY side is an ASSUMPTION: 0.20 is the repo's walk floor ([WorkoutDetector.motionThreshold]),
+     * the other points are placed around it, not fitted. Wrist motion saturates, so the top is capped.
+     */
+    val dayMotionMETAnchors: List<Pair<Double, Double>> = listOf(
+        0.05 to 1.0, 0.10 to 2.0, 0.20 to 3.5, 0.60 to 7.0,
+    )
+    /** 1 MET ≈ 1 kcal·kg⁻¹·h⁻¹ (Compendium convention), as kcal·kg⁻¹·s⁻¹. */
+    const val kcalPerMETKgS: Double = 1.0 / 3_600.0
+    /**
+     * Share of the legacy HR-only estimate kept when HR is high but the wearer is still.
+     * ASSUMPTION: Brage weights the motion branch here; 0.25 keeps some HR credit because wrist
+     * motion misses real work (cycling, carrying a load) as well as stress.
+     */
+    const val dayStillHRWeight: Double = 0.25
+    /**
+     * Minimum share of a motion window that must be covered by ~1 Hz gravity records before motion
+     * is used for an interval. Below it the interval keeps the HR-only estimate, which is how a
+     * coarse WHOOP 4.0 motion stream (#345) or a gravity dropout falls back to the old behaviour.
+     * ASSUMPTION: half the window.
+     */
+    const val dayMotionMinCoverage: Double = 0.5
+
+    /**
+     * Is this workout sport a strength session? One resolver for every caller (manual save,
+     * rescore, the day model), the same substrings `SportIcon` uses to pick the dumbbell.
+     */
+    fun isStrengthSport(sport: String?): Boolean {
+        val s = sport?.lowercase() ?: return false
+        return s.contains("strength") || s.contains("weight") || s.contains("lift") ||
+            s.contains("bodybuilding")
+    }
 
     fun resolveCoeffs(sex: String): Coeffs = when (sex.lowercase()) {
         "male" -> male
@@ -718,12 +804,15 @@ object Calories {
      * @param profile weight/height/age/sex for the BMR + active-EE coefficients.
      * @param hrmax effective HRmax (bpm); null → 220.
      * @param restingHR resting HR (bpm); null → 60.
+     * @param strength the bout is a strength session (classified or entered as one); its Keytel gross
+     *   rate is damped by [strengthKeytelFactor], never below the resting rate.
      */
     fun estimateBoutCalories(
         hrSamples: List<HrSample>,
         profile: UserProfile,
         hrmax: Double?,
         restingHR: Double?,
+        strength: Boolean = false,
     ): Pair<Double, Double> {
         val weightKg = if (profile.weightKg > 0) profile.weightKg else 70.0
         val heightCm = if (profile.heightCm > 0) profile.heightCm else 170.0
@@ -759,6 +848,9 @@ object Calories {
             }
             totalKcal += if (bpm < activeThreshold) {
                 restingRate * dur
+            } else if (strength) {
+                val gross = activeKcalPerS(coeffs, bpm, effHRmax, weightKg, age, vo2max)
+                maxOf(restingRate, gross * strengthKeytelFactor) * dur
             } else {
                 activeKcalPerS(coeffs, bpm, effHRmax, weightKg, age, vo2max) * dur
             }
@@ -788,7 +880,14 @@ object Calories {
      * Thus a 30 s sparse stream and a 1 Hz stream covering the same activity produce
      * comparable energy.
      *
-     * This is an on-device estimate from heart rate alone — NOT laboratory calorimetry,
+     * With [motion] (the day's [WorkoutDetector.activitySeries]), each active interval is the branched
+     * HR + motion blend of [dayActiveRate] instead of the HR-only gate. An interval whose motion window
+     * is not covered by gravity ([dayMotionMinCoverage]) keeps the HR-only estimate, so an empty
+     * [motion] reproduces the HR-only day exactly. [strengthWindows] (inclusive unix-second spans of
+     * strength sessions) damp the Keytel rate inside them by [strengthKeytelFactor]. Resting energy
+     * is the same in every case.
+     *
+     * This is an on-device estimate from heart rate and wrist motion — NOT laboratory calorimetry,
      * NOT Apple/WHOOP cloud parity, NOT medical advice.
      *
      * @param hrSamples the whole day's timestamped HR samples.
@@ -801,6 +900,8 @@ object Calories {
         profile: UserProfile,
         hrmax: Double?,
         restingHR: Double?,
+        motion: List<ActivityPoint> = emptyList(),
+        strengthWindows: List<LongRange> = emptyList(),
     ): DayEnergyEstimate {
         if (hrSamples.isEmpty()) return DayEnergyEstimate(0.0, 0.0, 0.0)
 
@@ -849,6 +950,16 @@ object Calories {
         )
         val restingKcal = restingRate * observedSeconds
 
+        // Motion sorted once with a running prefix sum, so each interval's mean intensity is two binary
+        // searches. Ties ordered by intensity so both platforms sum in the same order.
+        val motionSorted = motion.sortedWith(compareBy<ActivityPoint> { it.ts }.thenBy { it.intensity })
+        val motionTs = DoubleArray(motionSorted.size) { motionSorted[it].ts.toDouble() }
+        val motionPrefix = DoubleArray(motionSorted.size + 1)
+        for (k in motionSorted.indices) {
+            val v = motionSorted[k].intensity
+            motionPrefix[k + 1] = motionPrefix[k] + (if (v.isFinite()) v else 0.0)
+        }
+
         var activeKcal = 0.0
         for (i in ordered.indices) {
             // Active carry is capped at the INFERRED CADENCE, not at the wider resting cap. A 30 s
@@ -864,11 +975,101 @@ object Calories {
                 nominalSampleS
             }
             val bpm = ordered[i].bpm.toDouble()
-            if (bpm < activeThreshold) continue
-            val grossRate = activeKcalPerS(coeffs, bpm, effHRmax, weightKg, age, vo2max)
-            activeKcal += maxOf(0.0, grossRate - restingRate) * durationS
+            val ts = ordered[i].ts
+            val window = maxOf(durationS, WorkoutDetector.motionSmoothS)
+            val intensity = meanMotion(motionTs, motionPrefix, ts.toDouble(), window)
+            // Without usable motion the HR-only gate decides alone, exactly as before.
+            if (intensity == null && bpm < activeThreshold) continue
+            val inStrength = strengthWindows.any { ts in it }
+            var grossRate = activeKcalPerS(coeffs, bpm, effHRmax, weightKg, age, vo2max)
+            if (inStrength) grossRate *= strengthKeytelFactor
+            val hrAboveRest = maxOf(0.0, grossRate - restingRate)
+            if (intensity == null) {
+                activeKcal += hrAboveRest * durationS
+                continue
+            }
+            val rate = dayActiveRate(bpm, hrAboveRest, intensity, effResting, effHRmax,
+                activeThreshold, weightKg)
+            activeKcal += rate * durationS
         }
         return DayEnergyEstimate(restingKcal, activeKcal, observedSeconds)
+    }
+
+    /**
+     * Mean motion intensity over [from, from + span), or null when gravity covers less than
+     * [dayMotionMinCoverage] of that window at ~1 Hz (no motion, a dropout, or a coarse 4.0 stream).
+     */
+    internal fun meanMotion(ts: DoubleArray, prefix: DoubleArray, from: Double, span: Double): Double? {
+        if (ts.isEmpty() || span <= 0.0) return null
+        val lo = lowerBound(ts, from)
+        val hi = lowerBound(ts, from + span)
+        val n = hi - lo
+        if (n <= 0 || n.toDouble() < dayMotionMinCoverage * span) return null
+        return (prefix[hi] - prefix[lo]) / n.toDouble()
+    }
+
+    /** First index whose value is ≥ [x] ([ts] ascending). */
+    internal fun lowerBound(ts: DoubleArray, x: Double): Int {
+        var lo = 0
+        var hi = ts.size
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (ts[mid] < x) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    /** MET for a motion intensity, linear between [dayMotionMETAnchors], flat beyond both ends. */
+    internal fun motionMET(intensity: Double): Double {
+        val a = dayMotionMETAnchors
+        if (intensity <= a[0].first) return a[0].second
+        for (k in 1 until a.size) {
+            if (intensity <= a[k].first) {
+                val f = (intensity - a[k - 1].first) / (a[k].first - a[k - 1].first)
+                return a[k - 1].second + f * (a[k].second - a[k - 1].second)
+            }
+        }
+        return a[a.size - 1].second
+    }
+
+    /** [x] mapped linearly onto [0, 1] between [lo] and [hi], clamped. */
+    internal fun ramp(x: Double, lo: Double, hi: Double): Double {
+        if (hi <= lo) return if (x >= hi) 1.0 else 0.0
+        return minOf(1.0, maxOf(0.0, (x - lo) / (hi - lo)))
+    }
+
+    /**
+     * Branched HR + motion energy rate above rest (kcal/s) for one interval with motion data.
+     *
+     *     m = ramp(intensity, still → walk floor),  h = ramp(%HRR, dayLowHRRFraction → dayActiveHRRFraction)
+     *     moving = h · HR + (1 − h) · motion           (moving: HR where it is up, motion where it is not)
+     *     still  = dayStillHRWeight · legacyHR + (1 − dayStillHRWeight) · motion
+     *     rate   = m · moving + (1 − m) · still
+     *
+     * HR = Keytel above rest (already strength-damped by the caller); legacyHR = the same, but only at
+     * or above the HR-only gate, so a still wearer never gets more than the HR-only model gave.
+     * Motion = (MET − 1) · kg above rest. Both low gives 0: the interval stays at the resting floor.
+     * Swift twin `Calories.dayActiveRate`.
+     */
+    internal fun dayActiveRate(
+        bpm: Double,
+        hrAboveRest: Double,
+        intensity: Double,
+        restingHR: Double,
+        hrmax: Double,
+        activeThreshold: Double,
+        weightKg: Double,
+    ): Double {
+        val m = ramp(intensity, dayMotionRestIntensity, WorkoutDetector.motionThreshold)
+        val reserve = hrmax - restingHR
+        val hrr = if (reserve > 0.0) (minOf(bpm, hrmax) - restingHR) / reserve
+        else (if (bpm >= activeThreshold) 1.0 else 0.0)
+        val h = ramp(hrr, dayLowHRRFraction, dayActiveHRRFraction)
+        val motionAboveRest = maxOf(0.0, motionMET(intensity) - 1.0) * weightKg * kcalPerMETKgS
+        val legacyHR = if (bpm >= activeThreshold) hrAboveRest else 0.0
+        val moving = h * hrAboveRest + (1.0 - h) * motionAboveRest
+        val still = dayStillHRWeight * legacyHR + (1.0 - dayStillHRWeight) * motionAboveRest
+        return m * moving + (1.0 - m) * still
     }
 
     /** Backward-compatible total-kcal facade for the stored daily metric. */
@@ -877,7 +1078,9 @@ object Calories {
         profile: UserProfile,
         hrmax: Double?,
         restingHR: Double?,
+        motion: List<ActivityPoint> = emptyList(),
+        strengthWindows: List<LongRange> = emptyList(),
     ): Double {
-        return estimateDayEnergy(hrSamples, profile, hrmax, restingHR).totalKcal
+        return estimateDayEnergy(hrSamples, profile, hrmax, restingHR, motion, strengthWindows).totalKcal
     }
 }

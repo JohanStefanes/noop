@@ -217,6 +217,22 @@ object IntelligenceEngine {
      * approach this bound belongs there too.
      */
     const val STREAM_LIMIT: Int = 200_000
+
+    /**
+     * The day's ENTERED strength workouts (manual or imported rows under the app's own id) as inclusive
+     * spans, so the day calorie model damps Keytel over the same seconds the workout itself was damped
+     * for. Only the span is read, never another source's energy; Health rows are not consulted. Read from
+     * [readDaySkinAndWristOff], out of [analyzeRecentOnCpu] for its instrumented-size budget. Swift reads
+     * the same rows inline.
+     */
+    internal suspend fun strengthWorkoutWindows(
+        repo: WhoopRepository,
+        deviceId: String,
+        from: Long,
+        to: Long,
+    ): List<LongRange> = repo.workouts(deviceId, from, to, 200)
+        .filter { Calories.isStrengthSport(it.sport) && it.endTs >= it.startTs }
+        .map { it.startTs..it.endTs }
     internal const val PHYSIOLOGICAL_STEP_PAGE_SIZE: Int = 10_000
 
     private const val SECONDS_PER_DAY: Long = 86_400L
@@ -1044,6 +1060,7 @@ object IntelligenceEngine {
             val skinReads = readDaySkinAndWristOff(
                 repo, owner, from, to, ownerSource, skinFamilyByOwner, skinWornToleranceByOwner,
                 skinAnchorByOwner, skinAnchorResolvedOwners, skinAnchorScanFrom, skinAnchorScanTo, hr,
+                importedDeviceId, dayStart,
             )
             val skin = skinReads.skin
             val spo2 = skinReads.spo2
@@ -1208,6 +1225,7 @@ object IntelligenceEngine {
                 hrvWindowDetail = dayStart == nowLocalMidnight,
                 deepHrvWindow = deepHrvWindow,
                 effortMethod = effortMethod,
+                strengthWorkoutWindows = skinReads.strengthWindows,
             )
             dayScoreNanos += System.nanoTime() - tScore0
 
@@ -2342,7 +2360,7 @@ object IntelligenceEngine {
             val samples = runCatching { repo.hrSamplesForDevice(deviceId, row.startTs, row.endTs, 20_000) }
                 .getOrNull() ?: continue
             val s = ManualWorkoutRescore.scored(
-                samples, profile, hrMax, restingHR, effortMethod) ?: continue
+                samples, profile, hrMax, restingHR, effortMethod, sport = row.sport) ?: continue
             if (!ManualWorkoutRescore.improves(s, row.energyKcal, row.strain, allowStrainOnlyFill = true)) continue
             // Never lower a summed kcal: only take the recomputed kcal when it genuinely beats the stored
             // value; a strain-only fill (merged row) keeps the existing summed energyKcal.
@@ -3045,6 +3063,10 @@ object IntelligenceEngine {
         skinAnchorScanFrom: Long,
         skinAnchorScanTo: Long,
         hr: List<com.noop.data.HrSample>,
+        // The day's entered strength workouts ride along here too: a separate suspend call in
+        // analyzeRecentOnCpu would push it past its JaCoCo budget. [dayStart] is already a local midnight.
+        strengthDeviceId: String,
+        dayStart: Long,
     ): DaySkinReads {
         val skin = repo.skinTempSamples(owner, from, to, StreamReadCap.SKIN)
         // #93: WHOOP 4.0 raw SpO2 PPG samples for the night; analyzeDay banks the nightly red/IR ADC
@@ -3091,7 +3113,8 @@ object IntelligenceEngine {
         // short off-wrist tail survives. Pairing needs WRIST_ON too (to bound each interval); a span
         // still open at the window end closes at `to`. Empty when the strap emitted no wrist events.
         val wristOff = AnalyticsEngine.offWristIntervals(repo.events(owner, from, to, STREAM_LIMIT), to, hr)
-        return DaySkinReads(skin, spo2, skinFamily, skinWornToleranceSec, skinAnchorRaw, wristOff)
+        val strengthWindows = strengthWorkoutWindows(repo, strengthDeviceId, dayStart, dayStart + SECONDS_PER_DAY - 1)
+        return DaySkinReads(skin, spo2, skinFamily, skinWornToleranceSec, skinAnchorRaw, wristOff, strengthWindows)
     }
 
     /** What [readDaySkinAndWristOff] hands back. A holder rather than loose returns so the call site
@@ -3103,6 +3126,7 @@ object IntelligenceEngine {
         val skinWornToleranceSec: Long,
         val skinAnchorRaw: Double?,
         val wristOff: List<Pair<Long, Long>>,
+        val strengthWindows: List<LongRange>,
     )
 
     /**

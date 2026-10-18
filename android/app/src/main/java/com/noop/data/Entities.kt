@@ -331,9 +331,9 @@ data class DailyMetric(
     // positive u16-counter deltas); activity-file imports can fill missing steps from file summaries.
     // APPROXIMATE, not cloud/clinical parity. (#78)
     val steps: Int? = null,
-    // On-device APPROXIMATE whole-day active+resting energy estimate (kcal), computed from HR alone
-    // by AnalyticsEngine (Keytel active + Harris–Benedict BMR). Null when the day has no scored HR
-    // window. NOT cloud/clinical parity, a heart-rate estimate. (#78)
+    // On-device APPROXIMATE whole-day active+resting energy estimate (kcal), computed from HR and,
+    // where gravity covers it, wrist motion by AnalyticsEngine (Keytel / motion-MET blend + Mifflin–St
+    // Jeor BMR). Null when the day has no scored HR window. NOT cloud/clinical parity, an estimate. (#78)
     val activeKcalEst: Double? = null,
     // WHOOP 4.0 raw SpO2 PPG ADC means over detected sleep (v17 columns, #93). The RAW red/IR optical
     // channels banked on the v24 historical layout (spo2_red@68 / spo2_ir@70), NOT a calibrated

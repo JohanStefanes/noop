@@ -41,7 +41,9 @@ import kotlin.math.sqrt
  * ONLY against synthetic fixtures that each recover a distinct injected pattern (see
  * WorkoutTypeClassifierTest). This is advisory instrumentation — a caller may use it to LABEL or
  * SUGGEST a class on a detected workout, but it must never override a user's own sport selection and
- * must never gate a downstream score. Real-world accuracy against labeled workouts (e.g. Oura-import
+ * must never gate a downstream score. One deliberate exception: a detected bout labelled STRENGTH
+ * has its estimated calories damped ([Calories.strengthKeytelFactor], [AnalyticsEngine.analyzeDay]),
+ * an energy ESTIMATE, not a gate; a misread costs ~30% of one bout's active kcal. Real-world accuracy against labeled workouts (e.g. Oura-import
  * `workout.sport` ground truth) is an explicit follow-up, not done here. The `scores` field on
  * [WorkoutClassPrediction] reports every candidate class's raw match score precisely so a later pass
  * can compute accuracy / top-k / confusion against real labels without re-deriving anything.

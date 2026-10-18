@@ -43,8 +43,9 @@ final class WorkoutDetectorTests: XCTestCase {
         let hr = (0..<86400).map { HRSample(ts: $0, bpm: 80) }  // a full "day" of resting
         let profile = UserProfile(weightKg: 80, heightCm: 180, age: 30, sex: "male")
         let (kcal, _) = Calories.estimateBoutCalories(hr, profile: profile, hrmax: 190, restingHR: 60)
-        // 86400 s at BMR rate ≈ full BMR ≈ 1853.6 kcal/day.
-        XCTAssertEqual(kcal, 1853.632, accuracy: 1.0)
+        // 86400 s at BMR rate ≈ full BMR. Mifflin–St Jeor: 10·80 + 6.25·180 − 5·30 + 5 = 1780 kcal/day
+        // (was ≈ 1853.6 under revised Harris–Benedict).
+        XCTAssertEqual(kcal, 1780.0, accuracy: 1.0)
     }
 
     func testCaloriesSexCoefficientsDiffer() {

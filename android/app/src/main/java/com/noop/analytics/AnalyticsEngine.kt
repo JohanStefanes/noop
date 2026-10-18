@@ -420,6 +420,11 @@ object AnalyticsEngine {
         // Threaded rather than read from a global so this stays a pure function, and defaulted so every
         // existing caller and test is byte-identical.
         effortMethod: StrainScorer.Method = StrainScorer.Method.EDWARDS,
+        // Inclusive [start, end] spans of the day's ENTERED strength workouts ([Calories.isStrengthSport]).
+        // The day calorie model damps Keytel inside them; detected bouts classified as strength are added
+        // here. Last, after [effortMethod], so IntelligenceEngine's call keeps its argument
+        // order. Default empty keeps pure-function callers/tests byte-identical.
+        strengthWorkoutWindows: List<LongRange> = emptyList(),
     ): DayResult {
 
         // Precompute the day's UTC bounds ONCE (#996). isoDay is a FIXED-UTC formatter, so
@@ -877,7 +882,7 @@ object AnalyticsEngine {
         // re-reads it through the next night window (which ends at ≈ noon). Falls back to the night
         // window for pure-function callers/tests.
         var detectionFunnel: WorkoutDetector.DetectionFunnel? = null
-        val workouts = WorkoutDetector.detect(
+        val detectedWorkouts = WorkoutDetector.detect(
             hr = dayHr ?: hr,
             gravity = dayGravity ?: gravity,
             restingHR = restingHRDaily?.toDouble(),
@@ -902,6 +907,27 @@ object AnalyticsEngine {
             effortMethod = effortMethod,
             funnel = { detectionFunnel = it },
         )
+
+        // Strength sessions: a detected bout the coarse classifier labels STRENGTH has its Keytel
+        // calories damped ([Calories.strengthKeytelFactor]), and its span joins the entered strength
+        // workouts so the day total is damped over the same seconds. Classified ONCE here, so the bout
+        // and the day cannot disagree about which seconds were strength.
+        val strengthWindows = strengthWorkoutWindows.toMutableList()
+        val workouts: List<ExerciseSession> = detectedWorkouts.map { s ->
+            val features = WorkoutTypeFeatureExtractor.extract(
+                hr = dayHr ?: hr, gravity = dayGravity ?: gravity, steps = daySteps ?: steps,
+                start = s.start, end = s.end, restingHR = restingHRDaily?.toDouble(), maxHR = effMaxHR,
+                caloriesKcal = s.caloriesKcal,
+            )
+            if (features == null ||
+                WorkoutTypeClassifier.classify(features).predictedClass != CoarseWorkoutClass.STRENGTH
+            ) {
+                s
+            } else {
+                strengthWindows.add(s.start..s.end)
+                WorkoutDetector.strengthRescored(s, dayHr ?: hr, restingHRDaily?.toDouble(), profile)
+            }
+        }
 
         // ── Steps (APPROXIMATE) ───────────────────────────────────────────────
         // step_motion_counter@57 is a CUMULATIVE u16 running counter (it climbs while you move, holds
@@ -931,11 +957,12 @@ object AnalyticsEngine {
             if (scaled > 0) scaled else null
         }
 
-        // ── Daily calories (APPROXIMATE, HR-only whole-day estimate) ──────────
-        // Whole-day active+resting energy from the full HR window, using the same resting/active
-        // per-second model the per-workout estimate uses (resting BMR below activeThreshold, Keytel
-        // active above). effMaxHR + restingHRDaily are the same effective HRmax / resting baseline
-        // strain uses. Null when there is no HR. A heart-rate ESTIMATE — not cloud/clinical parity.
+        // ── Daily calories (APPROXIMATE, HR + motion whole-day estimate) ──────
+        // Whole-day active+resting energy from the full HR window: Mifflin–St Jeor BMR as the floor,
+        // and above it the branched HR + motion blend ([Calories.estimateDayEnergy]), which falls back
+        // to the HR-only gate for any interval the gravity stream does not cover (a WHOOP 4.0's coarse
+        // motion, a dropout). effMaxHR + restingHRDaily are the same effective HRmax / resting baseline
+        // strain uses. Null when there is no HR. An ESTIMATE — not cloud/clinical parity.
         // Whole-day additive totals (steps above, calories here) are summed over the full LOCAL
         // calendar day supplied by the caller (dayHr / daySteps), NOT the ~42h sleep-detection
         // window — which, anchored to the current time-of-day, would drop a past day's late hours
@@ -944,6 +971,10 @@ object AnalyticsEngine {
         // night-window hr for pure-function callers that don't supply dayHr. Strain keeps the full
         // window (bounded log).
         val dayHrFiltered = (dayHr ?: hr).filter { tsInDay(it.ts) }
+        // Motion is derived from the whole read window (so the first in-day delta has a predecessor)
+        // and then cut to the same LOCAL day as the HR (#277).
+        val dayMotion = if (dayHrFiltered.isEmpty()) emptyList()
+        else WorkoutDetector.activitySeries(dayGravity ?: gravity).filter { tsInDay(it.ts) }
         val activeKcalEst: Double? = if (dayHrFiltered.isEmpty()) {
             null
         } else {
@@ -952,6 +983,8 @@ object AnalyticsEngine {
                 profile = profile,
                 hrmax = effMaxHR,
                 restingHR = restingHRDaily?.toDouble(),
+                motion = dayMotion,
+                strengthWindows = strengthWindows,
             )
         }
 

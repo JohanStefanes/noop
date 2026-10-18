@@ -1409,6 +1409,13 @@ final class IntelligenceEngine: ObservableObject {
                 } else {
                     dayGrav = (try? await store.gravitySamples(deviceId: owner, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
                 }
+                // The day's ENTERED strength workouts (manual or imported rows under the app's own id), so the
+                // day calorie model damps Keytel over the same seconds the workout itself was damped for. Only
+                // the span is read, never another source's energy. Apple Health rows are not consulted.
+                let strengthWindows: [ClosedRange<Int>] = ((try? await store.workouts(
+                    deviceId: ownerFallbackId, from: dayMid, to: dayEnd, limit: 200)) ?? [])
+                    .filter { Calories.isStrengthSport($0.sport) && $0.endTs >= $0.startTs }
+                    .map { $0.startTs...$0.endTs }
 
                 // CONSUME (#531 / #175): the strap's OWN band sleep_state for the night window as timestamped
                 // (ts, state) samples, so the H7 morning-stillness guard can confirm a borderline re-onset
@@ -1516,6 +1523,7 @@ final class IntelligenceEngine: ObservableObject {
                                                      vendorResp: vendorResp, gravity: grav,
                                                      steps: steps, dayHr: dayHr, daySteps: daySteps,
                                                      dayGravity: dayGrav,
+                                                     strengthWorkoutWindows: strengthWindows,
                                                      skinTemp: skin,
                                                      skinTempFamily: skinFamily,   // #938
                                                      skinTempAnchorRaw: skinAnchorRaw,   // #938 second capture
@@ -3198,7 +3206,7 @@ final class IntelligenceEngine: ObservableObject {
             guard let samples = try? await store.hrSamples(deviceId: deviceId, from: row.startTs,
                                                            to: row.endTs, limit: 20_000),
                   let s = ManualWorkoutRescore.scored(windowSamples: samples, profile: up, hrMax: hrMax,
-                                                      restingHR: restingHR,
+                                                      restingHR: restingHR, sport: row.sport,
                                                       effortMethod: effortMethod),
                   ManualWorkoutRescore.improves(s, over: row.energyKcal, currentStrain: row.strain,
                                                 allowStrainOnlyFill: true)

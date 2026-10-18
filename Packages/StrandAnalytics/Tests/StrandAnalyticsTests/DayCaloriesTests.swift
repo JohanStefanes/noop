@@ -2,8 +2,8 @@ import XCTest
 @testable import StrandAnalytics
 import WhoopProtocol
 
-/// Tests Calories.estimateDayCalories — the APPROXIMATE whole-day HR-only energy estimate
-/// (Keytel active + Harris–Benedict BMR) that backs DailyMetric.activeKcalEst for BLE-only
+/// Tests Calories.estimateDayCalories — the APPROXIMATE whole-day energy estimate (Keytel active +
+/// Mifflin–St Jeor BMR; these vectors carry no motion, so the HR-only path) that backs DailyMetric.activeKcalEst for BLE-only
 /// users. Pure-function tests; no DB. Not cloud/clinical parity. Mirrors the Android
 /// DayCaloriesTest vectors value-for-value.
 final class DayCaloriesTests: XCTestCase {
@@ -48,9 +48,10 @@ final class DayCaloriesTests: XCTestCase {
             + hrDay(bpm: 70, n: block, start: 2 * block)
         let total = Calories.estimateDayCalories(day, profile: profile,
                                                  hrmax: 185.0, restingHR: 55.0)
-        // Measured from the legacy estimator on main. Its per-sample summation differs from the
-        // new R × N association by ~6.6e-9 kcal, so keep tolerance above that rounding noise.
-        XCTAssertEqual(total, 6_774.323772067612, accuracy: 1e-6,
+        // Re-pinned for the Mifflin–St Jeor BMR (was 6_774.323772067612 under revised Harris–Benedict).
+        // The HR-only algorithm is unchanged: the pre-change estimator run with Mifflin coefficients
+        // gives this same total (scratch oracle), so only the resting rate moved, not the method.
+        XCTAssertEqual(total, 6_727.4924387301135, accuracy: 1e-6,
                        "a gapless 1 Hz day must remain equal to the legacy estimator")
     }
 
@@ -70,14 +71,15 @@ final class DayCaloriesTests: XCTestCase {
     func testSedentaryFullDayApproximatesBMR() {
         // A full 24 h at resting HR (below the day active gate) must total ≈ the subject's BMR:
         // the day estimator floors every sub-threshold second at the resting metabolic rate, so
-        // an all-rest day is BMR by construction. Standard male test subject's revised
-        // Harris–Benedict BMR ≈ 1825 kcal. This is an APPROXIMATE estimate, not medical advice.
+        // an all-rest day is BMR by construction. Standard male test subject's Mifflin–St Jeor BMR
+        // = 10·80 + 6.25·180 − 5·35 + 5 = 1755 kcal (was ≈ 1825 under revised Harris–Benedict).
+        // This is an APPROXIMATE estimate, not medical advice.
         let profile = UserProfile(weightKg: 80, heightCm: 180, age: 35, sex: "male")
         let sedentary = hrDay(bpm: 55, n: 86_400)   // 24 h, all at resting HR
         let total = Calories.estimateDayCalories(sedentary, profile: profile,
                                                  hrmax: 185.0, restingHR: 55.0)
-        XCTAssertEqual(total, 1825.25, accuracy: 1.0,
-                       "a sedentary full day must total ≈ the subject's BMR (~1825 kcal)")
+        XCTAssertEqual(total, 1755.0, accuracy: 1.0,
+                       "a sedentary full day must total ≈ the subject's BMR (1755 kcal)")
     }
 
     func testLightActivityDayIsFarBelowOldInflatedTotal() {
@@ -93,8 +95,8 @@ final class DayCaloriesTests: XCTestCase {
             + hrDay(bpm: 100, n: block, start: 2 * block)
         let total = Calories.estimateDayCalories(lightDay, profile: profile,
                                                  hrmax: 185.0, restingHR: 55.0)
-        // NEW total ≈ 1825 kcal (every second below the 120 bpm gate → BMR floor).
-        XCTAssertEqual(total, 1825.25, accuracy: 1.0,
+        // NEW total ≈ the 1755 kcal Mifflin BMR (every second below the 120 bpm gate → BMR floor).
+        XCTAssertEqual(total, 1755.0, accuracy: 1.0,
                        "a light-activity day must land near BMR, not the old inflated total")
         // Teeth: the OLD 30%-gate model credited the 8 h @100 bpm block at the full Keytel
         // active rate (~3551 kcal for that block alone), so the old day total was ≈ 4768 kcal.
@@ -144,11 +146,13 @@ final class DayCaloriesTests: XCTestCase {
             [HRSample(ts: 0, bpm: 130), HRSample(ts: 3600, bpm: 130)],
         ].map { Calories.estimateDayEnergy($0, profile: profile, hrmax: 185, restingHR: 55) }
         // Generated from the Swift implementation and copied verbatim to Android's parity test.
+        // Regenerated for the Mifflin–St Jeor BMR: resting drops (1825.247 → 1755), and active, which
+        // is Keytel ABOVE the resting rate, rises by the same per-second difference.
         let expected: [(resting: Double, active: Double, total: Double, seconds: Double)] = [
-            (1825.247000000000, 0.000000000000, 1825.247000000000, 86_400.0),
-            (12.675326388889, 103.105766084605, 115.781092473494, 600.0),
-            (12.675326388889, 103.105766084603, 115.781092473492, 600.0),
-            (2.535065277778, 20.621153216921, 23.156218494699, 120.0),
+            (1755.0, 0.0, 1755.0, 86_400.0),
+            (12.1875, 103.59359247349323, 115.78109247349323, 600.0),
+            (12.1875, 103.59359247349212, 115.78109247349212, 600.0),
+            (2.4375, 20.71871849469843, 23.15621849469843, 120.0),
         ]
         for (value, oracle) in zip(vectors, expected) {
             XCTAssertEqual(value.restingKcal, oracle.resting, accuracy: 1e-9)
