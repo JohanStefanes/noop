@@ -154,24 +154,31 @@ final class JohanWatchCompareModel: ObservableObject {
 
 /// "MG vs Watch": Phase 1 of the roadmap on the phone. How completely the strap recorded each night, and how
 /// far its heart rate and HRV sit from the Apple Watch worn the same night.
+///
+/// Answer first: three coloured verdicts and a table of nights. Offsets, pair counts and the method sit
+/// behind "Details" toggles, so the screen reads at a glance and still keeps every figure one tap away.
 struct JohanWatchCompareView: View {
     @EnvironmentObject private var repo: Repository
     @EnvironmentObject private var health: HealthKitBridge
     @Environment(\.johanReloadTick) private var reloadTick
     @StateObject private var model = JohanWatchCompareModel()
+    @State private var openNights: Set<Date> = []
+    @State private var summaryDetails = false
+    @State private var spo2Details = false
+    @State private var gapDetails = false
+    @State private var methodDetails = false
 
     var body: some View {
         JohanScreen(title: String(localized: "MG vs Watch")) {
             if !model.loaded {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
             } else {
-                summaryCard
                 if let gap = model.gap { gapHint(gap) }
-                spo2Card
+                summaryCard
                 JohanOverline(String(localized: "Nights")).padding(.top, 8)
-                ForEach(model.nights.reversed(), id: \.night) { nightCard($0) }
-                Text("The Watch measures HRV as SDNN over about a minute, a few times a night. Each reading is compared with the strap's SDNN over the same minute, not with its overnight RMSSD.")
-                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                nightsTable
+                spo2Card
+                methodNote
             }
         }
         .task(id: reloadTick) { await model.load(repo: repo) }
@@ -183,21 +190,166 @@ struct JohanWatchCompareView: View {
     private var summaryCard: some View {
         let s = model.summary
         return JohanCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("\(s.nightsBoth) of \(s.nights) nights with both")
                     .font(JohanTheme.Fonts.title).foregroundStyle(JohanTheme.textPrimary)
-                JohanAdaptiveStack(spacing: 16) {
-                    stat(String(localized: "Coverage"), percent(s.meanCoverage), note: String(localized: "strap, per night"))
-                    stat(String(localized: "Heart rate"), signed(s.hrBias, unit: "bpm"),
-                         note: String(localized: "\(s.hrPairs) pairs, ±\(number(s.hrMAE))"))
-                    stat("HRV", signed(s.hrvBias, unit: "ms"),
-                         note: String(localized: "\(s.hrvPairs) pairs, ±\(number(s.hrvMAE))"))
-                }
-                Text("Average difference, strap minus Watch. ± is the average size of the difference.")
+                verdictRow("heart.fill", String(localized: "Heart rate"), plusMinus(s.hrMAE, unit: "bpm"),
+                           JohanWatchCompare.hrAgreement(s.hrMAE))
+                verdictRow("waveform.path.ecg", "HRV", plusMinus(s.hrvMAE, unit: "ms"),
+                           JohanWatchCompare.hrvAgreement(s.hrvMAE))
+                verdictRow("dot.radiowaves.left.and.right", String(localized: "Coverage"), percent(s.meanCoverage),
+                           JohanWatchCompare.coverageAgreement(s.meanCoverage))
+                Text("± is how far the strap sits from the Watch on average.")
                     .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                detailsToggle($summaryDetails)
+                if summaryDetails {
+                    VStack(alignment: .leading, spacing: 6) {
+                        line("heart.fill", String(localized: "Heart rate \(signed(s.hrBias, unit: "bpm")), \(s.hrPairs) pairs"),
+                             tint: JohanTheme.strainBlue)
+                        line("waveform.path.ecg", String(localized: "HRV \(signed(s.hrvBias, unit: "ms")), \(s.hrvPairs) pairs"),
+                             tint: JohanTheme.sleepViolet)
+                        Text("Average difference, strap minus Watch.")
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
     }
+
+    private func verdictRow(_ icon: String, _ title: String, _ value: String,
+                            _ agreement: JohanWatchCompare.Agreement?) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: icon).font(.system(.subheadline)).foregroundStyle(tint(agreement))
+                .frame(width: 22).accessibilityHidden(true)
+            Text(title).font(.system(.subheadline)).foregroundStyle(JohanTheme.textSecondary)
+            Spacer(minLength: 8)
+            Text(value).johanNumberFont(20).foregroundStyle(JohanTheme.textPrimary)
+            agreementPill(agreement)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func agreementPill(_ a: JohanWatchCompare.Agreement?) -> some View {
+        Text(agreementLabel(a))
+            .font(JohanTheme.Fonts.unit).foregroundStyle(a == nil ? JohanTheme.textTertiary : tint(a))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(tint(a).opacity(a == nil ? 0 : 0.16)))
+            .frame(minWidth: 64, alignment: .trailing)
+    }
+
+    // MARK: Nights
+
+    private var nightsTable: some View {
+        JohanCard(padding: 12) {
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    column(String(localized: "Pulse"))
+                    column("HRV")
+                    column(String(localized: "Coverage"))
+                    Color.clear.frame(width: 14)
+                }
+                .font(JohanTheme.Fonts.unit).foregroundStyle(JohanTheme.textTertiary)
+                .padding(.bottom, 6)
+                .accessibilityHidden(true)
+                ForEach(Array(model.nights.reversed().enumerated()), id: \.element.night) { i, n in
+                    if i > 0 { Divider().overlay(JohanTheme.cardBorder) }
+                    nightRow(n)
+                }
+            }
+        }
+    }
+
+    private func column(_ text: String) -> some View {
+        Text(text).lineLimit(1).minimumScaleFactor(0.7).frame(width: 64, alignment: .trailing)
+    }
+
+    private func nightRow(_ n: JohanWatchCompare.Night) -> some View {
+        let open = openNights.contains(n.night)
+        let empty = !n.hasStrap && !n.hasWatch
+        let coverage = n.hasStrap ? n.coverage : nil
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.snappy) {
+                    if open { openNights.remove(n.night) } else { openNights.insert(n.night) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(n.night.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+                        .font(.system(.subheadline, weight: .medium))
+                        .foregroundStyle(empty ? JohanTheme.textTertiary : JohanTheme.textPrimary)
+                    Spacer(minLength: 0)
+                    cell(plusMinus(n.hrMAE, unit: nil), JohanWatchCompare.hrAgreement(n.hrMAE))
+                    cell(plusMinus(n.hrvMAE, unit: nil), JohanWatchCompare.hrvAgreement(n.hrvMAE))
+                    cell(percent(coverage), JohanWatchCompare.coverageAgreement(coverage))
+                    Image(systemName: "chevron.down")
+                        .font(.system(.caption2, weight: .semibold)).foregroundStyle(JohanTheme.textTertiary)
+                        .rotationEffect(.degrees(open ? 180 : 0)).frame(width: 14)
+                }
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(nightAccessibility(n, coverage: coverage))
+            .accessibilityHint(String(localized: "Details"))
+            if open { nightDetails(n).padding(.bottom, 10) }
+        }
+    }
+
+    private func cell(_ value: String, _ a: JohanWatchCompare.Agreement?) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(a == nil ? Color.clear : tint(a)).frame(width: 6, height: 6)
+            Text(value).johanNumberFont(15).foregroundStyle(a == nil ? JohanTheme.textTertiary : JohanTheme.textPrimary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(width: 64, alignment: .trailing)
+    }
+
+    /// What the row leaves out: window, gaps, beats, offsets and SpO₂.
+    private func nightDetails(_ n: JohanWatchCompare.Night) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            line("clock", windowLabel(n), tint: JohanTheme.textTertiary)
+            if !n.hasStrap {
+                line("waveform.path.ecg", String(localized: "No strap data"), tint: JohanTheme.recoveryRed)
+            } else {
+                line("waveform.path.ecg",
+                     String(localized: "\(n.gapCount) gaps, longest \(n.longestGapSec / 60) min"),
+                     tint: n.coverage >= 0.9 ? JohanTheme.textSecondary : JohanTheme.recoveryYellow)
+                line("heart.text.square",
+                     String(localized: "\(n.rrClean) of \(n.rrCount) beats clean, RMSSD \(number(n.rmssd)) ms"),
+                     tint: JohanTheme.textSecondary)
+            }
+            if n.hasWatch {
+                line("applewatch",
+                     String(localized: "Heart rate \(signed(n.hrBias, unit: "bpm")) (\(n.hrPairs) of \(n.watchHRCount))"),
+                     tint: JohanTheme.strainBlue)
+                line("applewatch",
+                     String(localized: "HRV \(signed(n.hrvBias, unit: "ms")) (\(n.hrvPairs.count) of \(n.watchHRVCount))"),
+                     tint: JohanTheme.sleepViolet)
+            } else {
+                line("applewatch", String(localized: "No Watch data"), tint: JohanTheme.textTertiary)
+            }
+            if n.strapSpO2 != nil || n.watchSpO2 != nil {
+                line("drop.fill",
+                     String(localized: "SpO₂ strap \(number(n.strapSpO2)) %, Watch \(number(n.watchSpO2)) % (\(n.watchSpO2Count) readings)"),
+                     tint: JohanTheme.recoveryRed)
+            }
+        }
+        .padding(.leading, 2)
+    }
+
+    private func nightAccessibility(_ n: JohanWatchCompare.Night, coverage: Double?) -> String {
+        let date = n.night.formatted(.dateTime.weekday(.wide).day().month(.wide))
+        let parts = [date,
+                     String(localized: "Heart rate") + " " + plusMinus(n.hrMAE, unit: "bpm"),
+                     "HRV " + plusMinus(n.hrvMAE, unit: "ms"),
+                     String(localized: "Coverage") + " " + percent(coverage)]
+        return parts.joined(separator: ", ")
+    }
+
+    // MARK: SpO₂
 
     /// Whether the strap's SpO₂ candidate follows the Watch from night to night. The candidate is an
     /// unvalidated byte, so this card is evidence-gathering, and says so until enough varied nights exist.
@@ -208,25 +360,34 @@ struct JohanWatchCompareView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Blood oxygen (strap estimate)").font(JohanTheme.Fonts.title).foregroundStyle(JohanTheme.textPrimary)
                 JohanAdaptiveStack(spacing: 16) {
-                    stat(String(localized: "Nights"), "\(s.spo2Nights)", note: String(localized: "strap and Watch"))
-                    stat(String(localized: "Difference"), signed(s.spo2Bias, unit: "%"),
-                         note: String(localized: "±\(number(s.spo2MAE))"))
-                    stat("r", s.spo2R.map { $0.formatted(.number.precision(.fractionLength(2))) } ?? "–",
-                         note: String(localized: "Watch spread \(number(s.spo2WatchSpread)) %"))
+                    stat(String(localized: "Nights"), "\(min(s.spo2Nights, need)) / \(need)")
+                    stat(String(localized: "Difference"), plusMinus(s.spo2MAE, unit: "%"))
+                }
+                if s.spo2Nights < need {
+                    ProgressView(value: Double(s.spo2Nights), total: Double(need)).tint(JohanTheme.recoveryRed)
                 }
                 Text(spo2Verdict(s, need: need))
                     .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("The strap value is an unconfirmed reading of one byte the strap sends during sleep. It stays an estimate until it follows the Watch over many nights.")
-                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                detailsToggle($spo2Details)
+                if spo2Details {
+                    VStack(alignment: .leading, spacing: 6) {
+                        line("drop.fill", String(localized: "Difference \(signed(s.spo2Bias, unit: "%")), r \(s.spo2R.map { $0.formatted(.number.precision(.fractionLength(2))) } ?? "–")"),
+                             tint: JohanTheme.recoveryRed)
+                        line("applewatch", String(localized: "Watch spread \(number(s.spo2WatchSpread)) %"),
+                             tint: JohanTheme.textTertiary)
+                        Text("The strap value is an unconfirmed reading of one byte the strap sends during sleep. It stays an estimate until it follows the Watch over many nights.")
+                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
     }
 
     private func spo2Verdict(_ s: JohanWatchCompare.Summary, need: Int) -> String {
         if s.spo2Nights < need {
-            return String(localized: "\(s.spo2Nights) of \(need) nights so far. Turn on Blood Oxygen on the Watch and wear both overnight.")
+            return String(localized: "Turn on Blood Oxygen on the Watch and wear both overnight.")
         }
         if (s.spo2WatchSpread ?? 0) < 2 {
             return String(localized: "Your Watch values barely change from night to night, so r cannot show yet whether the strap follows them. Only the difference says something so far.")
@@ -237,10 +398,18 @@ struct JohanWatchCompareView: View {
         return String(localized: "The strap does not follow the Watch so far.")
     }
 
-    /// Names the step that left every night without the Watch, instead of only "no night with both".
+    // MARK: Why no night has both
+
+    /// One line on what is missing and what to do; the reasoning behind it sits under "Details".
     private func gapHint(_ gap: JohanWatchCompare.WatchDataGap) -> some View {
         JohanCard {
             VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(JohanTheme.recoveryYellow)
+                        .accessibilityHidden(true)
+                    Text(gapHeadline(gap)).font(JohanTheme.Fonts.title).foregroundStyle(JohanTheme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 switch gap {
                 case .noReadAccess:
                     if health.auth == .entitlementMissing {
@@ -248,12 +417,6 @@ struct JohanWatchCompareView: View {
                             .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Apple Health returned nothing from the Watch or any other source over the last \(JohanWatchCompareModel.nightCount) nights. NOOP probably has no read access: Health answers a denied read with an empty list, not an error.")
-                            .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Turn it on in Settings → Health → Data Access & Devices → NOOP, and allow reading Heart Rate, Heart Rate Variability, Sleep and Blood Oxygen.")
-                            .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
                         Button {
                             Task {
                                 await health.requestAuthorization()
@@ -267,80 +430,94 @@ struct JohanWatchCompareView: View {
                                 .background(Capsule().fill(JohanTheme.strainBlue))
                         }
                         .buttonStyle(JohanPressStyle())
-                        Text("Health shows its sheet only for types not yet decided. If nothing appears, use Settings.")
+                        detailsToggle($gapDetails)
+                        if gapDetails {
+                            gapText("Apple Health returned nothing from the Watch or any other source over the last \(JohanWatchCompareModel.nightCount) nights. NOOP probably has no read access: Health answers a denied read with an empty list, not an error.")
+                            gapText("Turn it on in Settings → Health → Data Access & Devices → NOOP, and allow reading Heart Rate, Heart Rate Variability, Sleep and Blood Oxygen.")
+                            Text("Health shows its sheet only for types not yet decided. If nothing appears, use Settings.")
+                                .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                case .noWatchSamples(let sources):
+                    detailsToggle($gapDetails)
+                    if gapDetails {
+                        gapText("Apple Health has heart rate, HRV, sleep or blood oxygen from other sources, but none recorded on an Apple Watch, so every night stays without the Watch.")
+                        if !sources.isEmpty {
+                            Text("Sources seen")
+                                .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                            ForEach(sources, id: \.self) { label in
+                                line("applewatch", label, tint: JohanTheme.textTertiary)
+                            }
+                        }
+                        Text("A sample counts as the Watch's when its product type starts with \"Watch\" or its device model is \"Watch\".")
                             .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                case .noWatchSamples(let sources):
-                    Text("Apple Health has heart rate, HRV, sleep or blood oxygen from other sources, but none recorded on an Apple Watch, so every night stays without the Watch.")
-                        .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !sources.isEmpty {
-                        Text("Sources seen")
-                            .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
-                        ForEach(sources, id: \.self) { label in
-                            line("applewatch", label, tint: JohanTheme.textTertiary)
-                        }
-                    }
-                    Text("A sample counts as the Watch's when its product type starts with \"Watch\" or its device model is \"Watch\".")
-                        .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
                 case .noOverlap:
-                    Text("No night with both devices yet. Wear the Apple Watch with sleep tracking on beside the strap, and the comparison fills in here each morning.")
-                        .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    gapText("No night with both devices yet. Wear the Apple Watch with sleep tracking on beside the strap, and the comparison fills in here each morning.")
                 }
             }
         }
     }
 
-    private func stat(_ title: String, _ value: String, note: String) -> some View {
+    private func gapHeadline(_ gap: JohanWatchCompare.WatchDataGap) -> String {
+        switch gap {
+        case .noReadAccess: return String(localized: "NOOP can't read Apple Health")
+        case .noWatchSamples: return String(localized: "No Apple Watch data in Health")
+        case .noOverlap: return String(localized: "No shared night yet")
+        }
+    }
+
+    private func gapText(_ text: LocalizedStringKey) -> some View {
+        Text(text).font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: Method
+
+    private var methodNote: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.snappy) { methodDetails.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("How it's compared")
+                    Image(systemName: "chevron.down").rotationEffect(.degrees(methodDetails ? 180 : 0))
+                }
+                .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+            }
+            .buttonStyle(.plain)
+            if methodDetails {
+                Text("The Watch measures HRV as SDNN over about a minute, a few times a night. Each reading is compared with the strap's SDNN over the same minute, not with its overnight RMSSD.")
+                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 4).padding(.top, 4)
+    }
+
+    // MARK: Pieces
+
+    private func detailsToggle(_ isOn: Binding<Bool>) -> some View {
+        Button {
+            withAnimation(.snappy) { isOn.wrappedValue.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Text(isOn.wrappedValue ? "Less" : "Details")
+                Image(systemName: "chevron.down").rotationEffect(.degrees(isOn.wrappedValue ? 180 : 0))
+            }
+            .font(.system(.caption, weight: .semibold)).foregroundStyle(JohanTheme.strainBlue)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func stat(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
             Text(value).johanNumberFont(22).foregroundStyle(JohanTheme.textPrimary)
-            Text(note).font(JohanTheme.Fonts.unit).foregroundStyle(JohanTheme.textTertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: One night
-
-    private func nightCard(_ n: JohanWatchCompare.Night) -> some View {
-        JohanCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(n.night.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
-                        .font(JohanTheme.Fonts.title).foregroundStyle(JohanTheme.textPrimary)
-                    Spacer()
-                    Text(windowLabel(n)).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textTertiary)
-                }
-                if !n.hasStrap {
-                    line("waveform.path.ecg", String(localized: "No strap data"), tint: JohanTheme.recoveryRed)
-                } else {
-                    line("waveform.path.ecg",
-                         String(localized: "Strap \(percent(n.coverage)) covered, \(n.gapCount) gaps (longest \(n.longestGapSec / 60) min)"),
-                         tint: n.coverage >= 0.9 ? JohanTheme.textSecondary : JohanTheme.recoveryYellow)
-                    line("heart.text.square",
-                         String(localized: "\(n.rrClean) of \(n.rrCount) beats clean, RMSSD \(number(n.rmssd)) ms"),
-                         tint: JohanTheme.textSecondary)
-                }
-                if n.hasWatch {
-                    line("applewatch",
-                         String(localized: "Heart rate \(signed(n.hrBias, unit: "bpm")) (±\(number(n.hrMAE)), \(n.hrPairs) of \(n.watchHRCount))"),
-                         tint: JohanTheme.strainBlue)
-                    line("applewatch",
-                         String(localized: "HRV \(signed(n.hrvBias, unit: "ms")) (±\(number(n.hrvMAE)), \(n.hrvPairs.count) of \(n.watchHRVCount))"),
-                         tint: JohanTheme.sleepViolet)
-                } else {
-                    line("applewatch", String(localized: "No Watch data"), tint: JohanTheme.textTertiary)
-                }
-                if n.strapSpO2 != nil || n.watchSpO2 != nil {
-                    line("drop.fill",
-                         String(localized: "SpO₂ strap \(number(n.strapSpO2)) %, Watch \(number(n.watchSpO2)) % (\(n.watchSpO2Count) readings)"),
-                         tint: JohanTheme.recoveryRed)
-                }
-            }
-        }
     }
 
     private func line(_ icon: String, _ text: String, tint: Color) -> some View {
@@ -349,6 +526,24 @@ struct JohanWatchCompareView: View {
                 .accessibilityHidden(true)
             Text(text).font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func tint(_ a: JohanWatchCompare.Agreement?) -> Color {
+        switch a {
+        case .good: return JohanTheme.recoveryGreen
+        case .fair: return JohanTheme.recoveryYellow
+        case .poor: return JohanTheme.recoveryRed
+        case nil: return JohanTheme.textTertiary
+        }
+    }
+
+    private func agreementLabel(_ a: JohanWatchCompare.Agreement?) -> String {
+        switch a {
+        case .good: return String(localized: "Good")
+        case .fair: return String(localized: "Fair")
+        case .poor: return String(localized: "Poor")
+        case nil: return "–"
         }
     }
 
@@ -369,6 +564,13 @@ struct JohanWatchCompareView: View {
 
     private func number(_ v: Double?) -> String {
         v.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "–"
+    }
+
+    /// "±2.1 bpm", or "–" without a value.
+    private func plusMinus(_ v: Double?, unit: String?) -> String {
+        guard let v else { return "–" }
+        let n = "±" + v.formatted(.number.precision(.fractionLength(1)))
+        return unit.map { "\(n) \($0)" } ?? n
     }
 
     private func signed(_ v: Double?, unit: String) -> String {

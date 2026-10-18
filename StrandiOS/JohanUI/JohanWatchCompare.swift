@@ -253,6 +253,27 @@ enum JohanWatchCompare {
         return sxy / (sxx * syy).squareRoot()
     }
 
+    // MARK: Agreement
+
+    /// How close the strap sits to the Watch, for the screen's coloured verdicts. Display bands only, not a
+    /// validation: the Watch is itself a wrist estimate.
+    enum Agreement: Equatable {
+        case good, fair, poor
+    }
+
+    /// Mean absolute heart-rate difference, bpm: within 3 is what two good wrist sensors manage at rest.
+    static func hrAgreement(_ mae: Double?) -> Agreement? { band(mae, good: 3, fair: 6) }
+    /// Mean absolute SDNN difference over one-minute readings, ms. Short readings are noisy, so wider bands.
+    static func hrvAgreement(_ mae: Double?) -> Agreement? { band(mae, good: 10, fair: 20) }
+    /// Fraction of the night's minutes the strap recorded.
+    static func coverageAgreement(_ coverage: Double?) -> Agreement? {
+        coverage.map { $0 >= 0.9 ? .good : $0 >= 0.75 ? .fair : .poor }
+    }
+
+    private static func band(_ v: Double?, good: Double, fair: Double) -> Agreement? {
+        v.map { $0 <= good ? .good : $0 <= fair ? .fair : .poor }
+    }
+
     // MARK: Why no night has both
 
     /// What one Health sample type returned over the loaded range, at each step of the Watch filter.

@@ -147,4 +147,11 @@ final class JohanWatchCompareTests: XCTestCase {
         let many = (0..<20).map { "s\($0)" }
         XCTAssertEqual(JohanWatchCompare.distinctSources(many), Array(many.prefix(JohanWatchCompare.maxDroppedSources)))
     }
+
+    func testAgreementBandsIncludeTheirUpperEdge() {
+        XCTAssertNil(JohanWatchCompare.hrAgreement(nil))
+        XCTAssertEqual([2.0, 3, 3.1, 6, 6.1].map(JohanWatchCompare.hrAgreement), [.good, .good, .fair, .fair, .poor])
+        XCTAssertEqual([10.0, 20, 20.1].map(JohanWatchCompare.hrvAgreement), [.good, .fair, .poor])
+        XCTAssertEqual([0.95, 0.9, 0.75, 0.7].map(JohanWatchCompare.coverageAgreement), [.good, .good, .fair, .poor])
+    }
 }
