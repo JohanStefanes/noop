@@ -82,6 +82,7 @@ enum JohanTheme {
     static let recoveryRed = Color(hex: "#FF453A")
     static let strainBlue = Color(hex: "#64D2FF")
     static let sleepViolet = Color(hex: "#A294FF")
+    static let caloriesOrange = Color(hex: "#FF9F0A")
 
     /// Sleep stages, one clearly separate hue each (wake green, REM orange, light periwinkle, deep blue), so
     /// the hypnogram, the stage rows and the phase list read with one key. Each clears 4.5:1 on black.

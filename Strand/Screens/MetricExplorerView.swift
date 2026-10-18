@@ -807,13 +807,7 @@ struct MetricDetailView: View {
     /// The trailing-N-days slice for a given range, taken RELATIVE TO THE LATEST data
     /// point (not "now") — `.all` returns everything.
     private func slice(for r: ExploreRange) -> [(day: String, value: Double)] {
-        guard let days = r.days else { return series }
-        guard let lastDay = series.last?.day, let last = parseDay(lastDay) else { return [] }
-        let cutoff = last.addingTimeInterval(-Double(days - 1) * 86_400)
-        return series.filter { row in
-            guard let d = parseDay(row.day) else { return false }
-            return d >= cutoff
-        }
+        MetricCorrelationScan.trailing(series, range: r)
     }
 
     private var isStepsDetail: Bool { MetricDetailSteps.isMetric(metric.key) }
@@ -1750,19 +1744,8 @@ struct MetricDetailView: View {
     /// the window so the heavy scan can be driven from `recomputeCorrelations()` into
     /// the `@State` cache instead of running inside `body`.
     private func computeCorrelationRows(windowed: [(day: String, value: Double)]) -> [CorrRow] {
-        let myDays = Set(windowed.map(\.day))
-        guard !myDays.isEmpty else { return [] }
-        var rows: [CorrRow] = []
-        for entry in others {
-            let otherWindowed = entry.series.filter { myDays.contains($0.day) }
-            let pairs = CorrelationEngine.alignByDay(windowed, otherWindowed)
-            guard pairs.count >= 10, let c = CorrelationEngine.pearson(pairs) else { continue }
-            if abs(c.r) >= 0.3 {
-                rows.append(CorrRow(id: entry.metric.id, metric: entry.metric, r: c.r, n: c.n))
-            }
-        }
-        rows.sort { abs($0.r) > abs($1.r) }
-        return Array(rows.prefix(6))
+        MetricCorrelationScan.top(windowed: windowed, others: others, limit: 6)
+            .map { CorrRow(id: $0.metric.id, metric: $0.metric, r: $0.r, n: $0.n) }
     }
 
     /// Rebuild the cached correlation scan for the CURRENT effective window, but only
@@ -1861,6 +1844,50 @@ struct MetricDetailView: View {
     private func correlationColor(_ r: Double) -> Color {
         let base = r >= 0 ? StrandPalette.statusPositive : StrandPalette.statusCritical
         return base.opacity(0.55 + 0.45 * min(abs(r), 1.0))
+    }
+}
+
+// MARK: - Correlation scan
+
+/// The one "what correlates" rule: Pearson r against each other series over the days of `windowed`,
+/// kept when |r| ≥ 0.30 over n ≥ 10 shared days, strongest first. The metric detail's card and the
+/// JohanUI recovery sheet's short line both read through here, so the two can never rank differently.
+enum MetricCorrelationScan {
+    struct Hit {
+        let metric: MetricDescriptor
+        let r: Double
+        let n: Int
+    }
+
+    /// The trailing `range` window of a day-sorted series, ending at its own last day (the metric
+    /// detail's window, so a caller outside it slices the same days).
+    static func trailing(_ series: [(day: String, value: Double)],
+                         range: ExploreRange) -> [(day: String, value: Double)] {
+        guard let days = range.days else { return series }
+        guard let lastDay = series.last?.day, let last = parseDay(lastDay) else { return [] }
+        let cutoff = last.addingTimeInterval(-Double(days - 1) * 86_400)
+        return series.filter { row in
+            guard let d = parseDay(row.day) else { return false }
+            return d >= cutoff
+        }
+    }
+
+    static func top(windowed: [(day: String, value: Double)],
+                    others: [(metric: MetricDescriptor, series: [(day: String, value: Double)])],
+                    limit: Int) -> [Hit] {
+        let myDays = Set(windowed.map(\.day))
+        guard !myDays.isEmpty else { return [] }
+        var hits: [Hit] = []
+        for entry in others {
+            let otherWindowed = entry.series.filter { myDays.contains($0.day) }
+            let pairs = CorrelationEngine.alignByDay(windowed, otherWindowed)
+            guard pairs.count >= 10, let c = CorrelationEngine.pearson(pairs) else { continue }
+            if abs(c.r) >= 0.3 {
+                hits.append(Hit(metric: entry.metric, r: c.r, n: c.n))
+            }
+        }
+        hits.sort { abs($0.r) > abs($1.r) }
+        return Array(hits.prefix(limit))
     }
 }
 

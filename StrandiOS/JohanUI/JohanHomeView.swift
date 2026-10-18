@@ -57,10 +57,11 @@ struct JohanHomeView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .johanStagger(4)
-                vitalsCard(s).johanStagger(5)
-                if s.isToday, let tonight { tonightCard(tonight).johanStagger(6) }
-                if !model.healthspan.isEmpty { healthspanCard(model.healthspan).johanStagger(7) }
-                if s.isToday { JohanCycleHomeCard().johanStagger(8) }
+                caloriesCard(s).johanStagger(5)
+                vitalsCard(s).johanStagger(6)
+                if s.isToday, let tonight { tonightCard(tonight).johanStagger(7) }
+                if !model.healthspan.isEmpty { healthspanCard(model.healthspan).johanStagger(8) }
+                if s.isToday { JohanCycleHomeCard().johanStagger(9) }
             }
             .id(model.dayOffset)
             .transition(.asymmetric(
@@ -420,46 +421,125 @@ struct JohanHomeView: View {
         .accessibilityHidden(true)
     }
 
-    // MARK: Vitals
+    // MARK: Calories
 
-    /// The nightly vitals, in WHOOP's Health Monitor set: HRV, resting HR and respiratory rate against the
-    /// personal average, then SpO₂ and skin temperature. Opens the full Health screen.
-    private func vitalsCard(_ s: JohanHomeModel.Snapshot) -> some View {
-        NavigationLink {
-            HealthView()
-                .background(JohanTheme.background.ignoresSafeArea())
-                .navigationBarTitleDisplayMode(.inline)
-        } label: {
+    /// The day's calories with their source; opens the Calories page.
+    private func caloriesCard(_ s: JohanHomeModel.Snapshot) -> some View {
+        NavigationLink { JohanCaloriesView() } label: {
             JohanCard {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Vitals").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                        Text("Calories").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
                         Spacer()
                         Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
                             .foregroundStyle(JohanTheme.textTertiary)
                     }
-                    JohanAdaptiveStack(spacing: 8) {
-                        vital("HRV", s.hrv, unit: "ms", decimals: 0, higherIsBetter: true)
-                        vital(String(localized: "Resting HR"), s.restingHR, unit: "bpm", decimals: 0, higherIsBetter: false)
-                        vital(String(localized: "Respiratory rate"), s.resp, unit: "/min", decimals: 1, higherIsBetter: nil)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        if let c = s.calories {
+                            CountUpText(value: c.kcal, format: JohanCaloriesView.kcalText, font: JohanTheme.number(30),
+                                        color: JohanTheme.caloriesOrange, animation: JohanTheme.Motion.countUp)
+                                .id(model.dayOffset)
+                            Text("kcal").font(.system(.callout, design: .rounded, weight: .semibold))
+                                .foregroundStyle(JohanTheme.textSecondary)
+                        } else {
+                            Text("–").font(JohanTheme.number(30)).foregroundStyle(JohanTheme.textTertiary)
+                        }
                     }
-                    JohanAdaptiveStack(spacing: 8) {
-                        vital(String(localized: "Blood oxygen"), JohanHomeModel.Vital(value: s.spo2), unit: "%",
-                              decimals: 0, higherIsBetter: nil,
-                              caption: s.spo2IsEstimate ? String(localized: "estimate")
-                                  : s.spo2Day.map { Self.readingAge($0, shown: s.spo2 != nil) })
-                        skinTempTile(s)
-                        Color.clear.frame(maxWidth: .infinity, maxHeight: 1).accessibilityHidden(true)
-                    }
-                    if s.hrv.baseline == nil && s.restingHR.baseline == nil && s.resp.baseline == nil {
-                        Text(s.isToday ? String(localized: "The comparison with your average (Ø) follows after calibration.") : String(localized: "Past days have no comparison with your average."))
-                            .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
-                    }
+                    Text(s.calories.map { JohanCaloriesView.sourceText($0.source) }
+                         ?? (s.isToday ? String(localized: "No calories yet today.") : String(localized: "No calories recorded.")))
+                        .font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .buttonStyle(JohanPressStyle())
-        .accessibilityHint(Text("Opens Health"))
+        .accessibilityHint(Text("Opens Calories"))
+    }
+
+    // MARK: Vitals
+
+    /// The nightly vitals, in WHOOP's Health Monitor set: HRV, resting HR and respiratory rate against the
+    /// personal average, then SpO₂ and skin temperature. Each value opens its own metric detail (trend,
+    /// range stats, what correlates); the header opens the full Health screen and the footer the whole
+    /// metric catalogue, which otherwise sits under More.
+    private func vitalsCard(_ s: JohanHomeModel.Snapshot) -> some View {
+        JohanCard {
+            VStack(alignment: .leading, spacing: 12) {
+                NavigationLink {
+                    HealthView()
+                        .background(JohanTheme.background.ignoresSafeArea())
+                        .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    HStack {
+                        Text("Vitals").font(.system(.headline)).foregroundStyle(JohanTheme.textPrimary)
+                        Spacer()
+                        Text("Health").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textSecondary)
+                        Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(JohanPressStyle())
+                .accessibilityHint(Text("Opens Health"))
+                JohanAdaptiveStack(spacing: 8) {
+                    metricLink("hrv") {
+                        vital("HRV", s.hrv, unit: "ms", decimals: 0, higherIsBetter: true)
+                    }
+                    metricLink("rhr") {
+                        vital(String(localized: "Resting HR"), s.restingHR, unit: "bpm", decimals: 0, higherIsBetter: false)
+                    }
+                    metricLink("resp_rate") {
+                        vital(String(localized: "Respiratory rate"), s.resp, unit: "/min", decimals: 1, higherIsBetter: nil)
+                    }
+                }
+                JohanAdaptiveStack(spacing: 8) {
+                    metricLink("spo2") {
+                        vital(String(localized: "Blood oxygen"), JohanHomeModel.Vital(value: s.spo2), unit: "%",
+                              decimals: 0, higherIsBetter: nil,
+                              caption: s.spo2IsEstimate ? String(localized: "estimate")
+                                  : s.spo2Day.map { Self.readingAge($0, shown: s.spo2 != nil) })
+                    }
+                    metricLink("skin_temp") { skinTempTile(s) }
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1).accessibilityHidden(true)
+                }
+                if s.hrv.baseline == nil && s.restingHR.baseline == nil && s.resp.baseline == nil {
+                    Text(s.isToday ? String(localized: "The comparison with your average (Ø) follows after calibration.") : String(localized: "Past days have no comparison with your average."))
+                        .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
+                }
+                Divider().overlay(JohanTheme.cardBorder)
+                NavigationLink { MetricExplorerView() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chart.xyaxis.line").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.strainBlue)
+                            .accessibilityHidden(true)
+                        Text("All metrics").font(.system(.subheadline, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(JohanPressStyle())
+                .accessibilityHint(Text("Opens the Metric Explorer"))
+            }
+        }
+    }
+
+    /// Wraps one vitals tile in a push to its WHOOP-sourced metric detail. Falls back to the bare tile when
+    /// the catalogue has no such entry, so a renamed key can never leave a link to nowhere.
+    @ViewBuilder
+    private func metricLink<Label: View>(_ key: String, @ViewBuilder label: () -> Label) -> some View {
+        if let metric = MetricCatalog.metric(key: key, source: "my-whoop") {
+            NavigationLink { MetricDetailView(metric: metric) } label: {
+                label().contentShape(Rectangle())
+            }
+            .buttonStyle(JohanPressStyle())
+            .accessibilityHint(Text("Shows the trend for \(metric.title)"))
+        } else {
+            label()
+        }
     }
 
     /// Skin temperature as the Health screen shows it: the absolute night mean or its deviation, whichever

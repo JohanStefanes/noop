@@ -47,6 +47,8 @@ final class JohanHomeModel: ObservableObject {
         var spo2Day: String?
         var skinTempDay: String?
         var targetBand: ClosedRange<Int>?
+        /// The day's calories and their source (`JohanCalories`: imported Apple Health first, else NOOP's estimate).
+        var calories: JohanCalories.Reading?
         /// What shaped the recovery score, from the engine's own scoring (`ChargeBreakdownWiring`, the
         /// same call the original Today and Coupled sheets make). nil while the night cannot honestly
         /// score (no usable HRV baseline, or no HRV / resting HR).
@@ -84,6 +86,8 @@ final class JohanHomeModel: ObservableObject {
     @Published private(set) var healthspan = Healthspan()
     /// SpO₂ candidate by day ("spo2_candidate" series), the fallback behind `Snapshot.spo2`.
     private var spo2CandidateByDay: [String: Double] = [:]
+    /// Imported Apple Health active energy by day, the first choice behind `Snapshot.calories`.
+    private var importedKcalByDay: [String: Double] = [:]
 
     let calibrationLength = Baselines.minNightsSeed
 
@@ -172,6 +176,7 @@ final class JohanHomeModel: ObservableObject {
         publish(row: row, key: key, isToday: isToday, calNights: calNights, baselines: baselines,
                 sleepPct: snapshot.dayKey == key ? snapshot.sleepPct : nil, effort: strainStored, repo: repo)
 
+        importedKcalByDay = JohanCalories.importedByDay(await repo.appleDailyRows(days: offset + 2))
         let sleepSeries = await repo.exploreSeries(key: "sleep_performance", source: "my-whoop")
         let sleepPct = sleepSeries.last(where: { $0.day == key })?.value
         if PuffinExperiment.spo2CandidateDisplayEnabled {
@@ -250,6 +255,7 @@ final class JohanHomeModel: ObservableObject {
             s.skinTempDevC = skinSource.skinTempDevC
         }
         s.targetBand = CoupledView.optimalStrainRange(recovery: row?.recovery)
+        s.calories = JohanCalories.reading(imported: importedKcalByDay[key], onDevice: row?.activeKcalEst)
         // The Sleep row scores against the same sleep figure the Schlaf dial on this screen shows.
         if let row, row.recovery != nil, let baselines,
            let breakdown = ChargeBreakdownWiring.breakdown(baselines: baselines, row: row, sleepPerfPercent: sleepPct) {

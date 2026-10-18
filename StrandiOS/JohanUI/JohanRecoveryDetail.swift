@@ -20,7 +20,10 @@ struct JohanRecoveryDetail: View {
     /// The days up to and including the shown one, oldest first (the shown day is the last entry).
     var trend: [TrendDay] = []
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var repo: Repository
     @State private var expanded: Set<String> = []
+    /// What else moves with recovery over the last month, besides its own drivers; nil until scanned.
+    @State private var correlations: [MetricCorrelationScan.Hit]?
     @State private var pickedTrendIndex: Int?
     private let motion = JohanStill()
 
@@ -41,17 +44,19 @@ struct JohanRecoveryDetail: View {
                         .johanStagger(1)
                     }
                     if trend.compactMap(\.recovery).count >= 2 { trendCard.johanStagger(3) }
+                    correlationsCard.johanStagger(4)
                     if drivers?.isEmpty == false {
                         Text("Points show how much a factor raised (+) or lowered (−) your recovery compared with your personal average (Ø).")
                             .font(JohanTheme.Fonts.caption)
                             .foregroundStyle(JohanTheme.textTertiary)
-                            .johanStagger(4)
+                            .johanStagger(5)
                     }
                 }
                 .padding(.horizontal, JohanTheme.Metrics.screenHPadding)
                 .padding(.bottom, 24)
             }
             .background(JohanTheme.background.ignoresSafeArea())
+            .task(id: repo.refreshSeq) { await scanCorrelations() }
             .navigationTitle("Recovery")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(JohanTheme.background, for: .navigationBar)
@@ -198,44 +203,160 @@ struct JohanRecoveryDetail: View {
     private func driverRow(_ d: ChargeDriver, index: Int, maxMagnitude: Double) -> some View {
         let color = pointsColor(d.deltaPoints)
         let open = expanded.contains(d.label)
-        return Button {
-            StrandHaptic.selection.play()
-            withAnimation(motion.isStill ? nil : .spring(response: 0.38, dampingFraction: 0.86)) {
-                if open { expanded.remove(d.label) } else { expanded.insert(d.label) }
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(JohanL10n.engine(d.label))
-                            .font(.system(.subheadline, weight: .semibold))
-                            .foregroundStyle(JohanTheme.textPrimary)
-                        Text(valueLine(d)).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
-                    }
-                    Spacer(minLength: 8)
-                    Text(pointsText(d.deltaPoints))
-                        .font(.system(.subheadline, design: .rounded, weight: .bold).monospacedDigit())
-                        .foregroundStyle(color)
-                    Image(systemName: "chevron.down")
-                        .font(.system(.caption, weight: .bold))
-                        .foregroundStyle(JohanTheme.textTertiary)
-                        .rotationEffect(.degrees(open ? 180 : 0))
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                StrandHaptic.selection.play()
+                withAnimation(motion.isStill ? nil : .spring(response: 0.38, dampingFraction: 0.86)) {
+                    if open { expanded.remove(d.label) } else { expanded.insert(d.label) }
                 }
-                JohanDivergingBar(delta: Double(d.deltaPoints), maxAbs: maxMagnitude, color: color, index: index)
-                if open {
+            } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(JohanL10n.engine(d.label))
+                                .font(.system(.subheadline, weight: .semibold))
+                                .foregroundStyle(JohanTheme.textPrimary)
+                            Text(valueLine(d)).font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        Text(pointsText(d.deltaPoints))
+                            .font(.system(.subheadline, design: .rounded, weight: .bold).monospacedDigit())
+                            .foregroundStyle(color)
+                        Image(systemName: "chevron.down")
+                            .font(.system(.caption, weight: .bold))
+                            .foregroundStyle(JohanTheme.textTertiary)
+                            .rotationEffect(.degrees(open ? 180 : 0))
+                    }
+                    JohanDivergingBar(delta: Double(d.deltaPoints), maxAbs: maxMagnitude, color: color, index: index)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint(Text(open ? "Hides the explanation" : "Shows the explanation"))
+            if open {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(JohanL10n.engine(d.verdict).capitalizedFirst)
                         .font(JohanTheme.Fonts.body)
                         .foregroundStyle(JohanTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    if let metric = Self.metric(forDriver: d.label) {
+                        detailLink(metric, title: String(localized: "Show trend"))
+                    }
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .padding(.horizontal, 16).padding(.vertical, 13)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 13)
+    }
+
+    /// The catalogue metric behind each engine driver (the labels are the engine's fixed English keys).
+    /// A driver without an entry here simply shows no trend link.
+    static func metric(forDriver label: String) -> MetricDescriptor? {
+        let key: String
+        switch label {
+        case "Heart rate variability": key = "hrv"
+        case "Resting heart rate": key = "rhr"
+        case "Sleep quality": key = "sleep_performance"
+        case "Respiratory rate": key = "resp_rate"
+        case "Skin temperature": key = "skin_temp"
+        default: return nil
+        }
+        return MetricCatalog.metric(key: key, source: "my-whoop")
+    }
+
+    /// A small "→ trend" link pushing one metric's full detail inside this sheet's own stack.
+    private func detailLink(_ metric: MetricDescriptor, title: String) -> some View {
+        NavigationLink { MetricDetailView(metric: metric) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.xyaxis.line").font(.system(.caption, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text(title).font(.system(.footnote, weight: .semibold))
+                Image(systemName: "chevron.right").font(.system(.caption2, weight: .bold))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(JohanTheme.strainBlue)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(JohanPressStyle())
+    }
+
+    // MARK: Correlations
+
+    /// Recovery's own trend and drivers already have their place above; this card shows what ELSE moved
+    /// with it over the last month, through the metric detail's own scan (`MetricCorrelationScan`), and
+    /// opens that detail for the full list.
+    private var correlationsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            JohanOverline(String(localized: "Moves with your recovery"))
+            JohanCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let hits = correlations {
+                        if hits.isEmpty {
+                            Text("Nothing else moved clearly with your recovery over the last 30 days.")
+                                .font(JohanTheme.Fonts.caption)
+                                .foregroundStyle(JohanTheme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            ForEach(hits, id: \.metric.id) { hit in correlationRow(hit) }
+                            Text("Last 30 days, besides the factors above. Moving together is not cause and effect.")
+                                .font(JohanTheme.Fonts.caption)
+                                .foregroundStyle(JohanTheme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Scanning your data…").font(JohanTheme.Fonts.caption)
+                                .foregroundStyle(JohanTheme.textSecondary)
+                        }
+                    }
+                    if let recoveryMetric = MetricCatalog.metric(key: "recovery", source: "my-whoop") {
+                        detailLink(recoveryMetric, title: String(localized: "Recovery trend and all correlations"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func correlationRow(_ hit: MetricCorrelationScan.Hit) -> some View {
+        let up = hit.r >= 0
+        let color = up ? JohanTheme.recoveryGreen : JohanTheme.recoveryRed
+        return HStack(spacing: 10) {
+            Image(systemName: hit.metric.icon)
+                .font(.system(.footnote, weight: .semibold))
+                .foregroundStyle(JohanTheme.textSecondary)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hit.metric.title).font(.system(.subheadline, weight: .semibold))
+                    .foregroundStyle(JohanTheme.textPrimary)
+                Text(up ? String(localized: "Higher when your recovery is higher")
+                        : String(localized: "Higher when your recovery is lower"))
+                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Text("\(up ? "+" : "−")\(String(format: "%.2f", abs(hit.r)))")
+                .font(.system(.subheadline, design: .rounded, weight: .bold).monospacedDigit())
+                .foregroundStyle(color)
+        }
         .accessibilityElement(children: .combine)
-        .accessibilityHint(Text(open ? "Hides the explanation" : "Shows the explanation"))
+    }
+
+    /// The month window the metric detail opens on, minus recovery itself and the metrics its drivers
+    /// already show, top two by |r|.
+    private func scanCorrelations() async {
+        guard let recoveryMetric = MetricCatalog.metric(key: "recovery", source: "my-whoop"),
+              let all = await repo.exploreAllSeries() else { return }
+        let own = all[recoveryMetric.id] ?? []
+        let excluded: Set<String> = ["recovery", "hrv", "rhr", "resp_rate", "skin_temp", "sleep_performance", "spo2"]
+        let others = MetricCatalog.all.compactMap { m -> (metric: MetricDescriptor, series: [(day: String, value: Double)])? in
+            guard !excluded.contains(m.key), let s = all[m.id], !s.isEmpty else { return nil }
+            return (m, s)
+        }
+        guard !Task.isCancelled else { return }
+        correlations = MetricCorrelationScan.top(windowed: MetricCorrelationScan.trailing(own, range: .month),
+                                                 others: others, limit: 2)
     }
 
     private func pointsText(_ p: Int) -> String {

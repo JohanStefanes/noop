@@ -274,9 +274,13 @@ struct JohanWorkoutView: View {
 }
 
 /// One workout in a JohanUI list: sport icon, name, date with duration and average heart rate, and its
-/// Strain on the 0 to 21 scale. Shared by the Strain and Workout pages.
+/// Strain on the 0 to 21 scale, or its calories on the Calories page. Shared by the Strain, Workout and
+/// Calories pages.
 struct JohanWorkoutRow: View {
+    enum Figure { case strain, calories }
+
     let workout: JohanStrainModel.Workout
+    var figure: Figure = .strain
     @ScaledMetric(relativeTo: .body) private var iconTile: CGFloat = 32
 
     var body: some View {
@@ -293,9 +297,21 @@ struct JohanWorkoutRow: View {
                 Text(subtitle).font(.system(.caption)).foregroundStyle(JohanTheme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
-            Text(workout.strain21.map { String(format: "%.1f", $0) } ?? "–")
-                .johanNumberFont(18)
-                .foregroundStyle(workout.strain21 != nil ? JohanTheme.strainBlue : JohanTheme.textTertiary)
+            switch figure {
+            case .strain:
+                Text(workout.strain21.map { String(format: "%.1f", $0) } ?? "–")
+                    .johanNumberFont(18)
+                    .foregroundStyle(workout.strain21 != nil ? JohanTheme.strainBlue : JohanTheme.textTertiary)
+            case .calories:
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(workout.energyKcal.map { JohanCaloriesView.kcalText($0) } ?? "–")
+                        .johanNumberFont(18)
+                        .foregroundStyle(workout.energyKcal != nil ? JohanTheme.caloriesOrange : JohanTheme.textTertiary)
+                    if workout.energyKcal != nil {
+                        Text("kcal").font(.system(.caption2)).foregroundStyle(JohanTheme.textTertiary)
+                    }
+                }
+            }
             Image(systemName: "chevron.right")
                 .font(.system(.caption, weight: .semibold))
                 .foregroundStyle(JohanTheme.textTertiary)

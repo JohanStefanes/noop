@@ -26,6 +26,12 @@ final class JohanStrainModel: ObservableObject {
         let energyKcal: Double?
         /// The stored row, handed to `WorkoutDetailView` unchanged.
         let row: WorkoutRow
+
+        init(row: WorkoutRow) {
+            startTs = row.startTs; sport = row.sport; source = row.source; durationS = row.durationS
+            strain21 = row.strain.map { UnitFormatter.effortValue($0, scale: .whoop) }
+            avgHr = row.avgHr; energyKcal = row.energyKcal; self.row = row
+        }
     }
 
     /// Days in the history chart, today included.
@@ -50,11 +56,7 @@ final class JohanStrainModel: ObservableObject {
         }
 
         let rows = await repo.workoutRows(days: Self.workoutWindowDays)
-        workouts = rows.sorted { $0.startTs > $1.startTs }.prefix(Self.recentWorkouts).map {
-            Workout(startTs: $0.startTs, sport: $0.sport, source: $0.source, durationS: $0.durationS,
-                    strain21: $0.strain.map { UnitFormatter.effortValue($0, scale: .whoop) },
-                    avgHr: $0.avgHr, energyKcal: $0.energyKcal, row: $0)
-        }
+        workouts = rows.sorted { $0.startTs > $1.startTs }.prefix(Self.recentWorkouts).map(Workout.init(row:))
         loaded = true
     }
 
