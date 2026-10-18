@@ -1187,10 +1187,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     NoopPrefs.setTsHealPending(appContext, false)
                 }
             }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
-            // One-shot shared Effort and sleep-wear repair: recompute strain from source across the FULL
-            // history and replay pre-fix sleep once. Either pending flag triggers one pass; both flags
-            // are set only after persistence returns. Cached-only days are preserved, changing Effort's
-            // old broad-window write behavior. Cancellation/failure retries next launch.
+            // One-shot shared Effort, sleep-wear and calorie-model repair: recompute strain and day
+            // calories from source across the FULL history and replay pre-fix sleep once. Any pending
+            // flag triggers one pass; all flags are set only after persistence returns. Cached-only days
+            // are preserved, changing Effort's old broad-window write behavior. Cancellation/failure retries next launch.
             runCatching {
                 IntelligenceEngine.runEffortRescoreIfNeeded(
                     repo = repository,
@@ -1201,11 +1201,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         !IntelligencePersistence.historyRepairIsPending(
                             effortDone = NoopPrefs.effortRescoreDone(appContext),
                             sleepWearDone = NoopPrefs.sleepWearRescoreDone(appContext),
+                            calorieDone = NoopPrefs.calorieRescoreDone(appContext),
                         )
                     },
                     flagSet = {
                         NoopPrefs.setEffortRescoreDone(appContext)
                         NoopPrefs.setSleepWearRescoreDone(appContext)
+                        NoopPrefs.setCalorieRescoreDone(appContext)
                     },
                     // #1567: this rewrites the FULL history once, so a missing owner source would bake the
                     // WHOOP5 skin-temp scale into every day of it.

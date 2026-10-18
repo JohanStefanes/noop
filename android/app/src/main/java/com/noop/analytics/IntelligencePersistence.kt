@@ -8,8 +8,8 @@ import com.noop.data.WhoopRepository
 
 /** Persistence-only helpers kept out of the already large scoring orchestrator. */
 internal object IntelligencePersistence {
-    fun historyRepairIsPending(effortDone: Boolean, sleepWearDone: Boolean): Boolean =
-        !effortDone || !sleepWearDone
+    fun historyRepairIsPending(effortDone: Boolean, sleepWearDone: Boolean, calorieDone: Boolean): Boolean =
+        !effortDone || !sleepWearDone || !calorieDone
 
     data class LegacyScoreSnapshot(
         val avgHrv: Double,

@@ -669,15 +669,27 @@ final class IntelligenceEngine: ObservableObject {
 
     /// Upgrade repair for nights rejected by an unmatched WRIST_OFF, including history older than
     /// the normal 21-day window. Reuses the full-history scoring path, including edited/dismissed
-    /// sleep protection and dependent daily metrics. Both flags describe this shared pass: either
-    /// pending flag triggers one run, and both are set only after every required write succeeds.
+    /// sleep protection and dependent daily metrics. All three flags (Effort, sleep-wear, calories)
+    /// describe this shared pass: any pending flag triggers one run, and all are set only after every
+    /// required write succeeds.
     /// Cached-only days are preserved, changing the old Effort-only repair from broad-window writes to
     /// writes only for days that were recomputed.
     static let sleepWearRescoreFlagKey = "intelligence.sleepWearRescore.v1.done"
     private var sleepWearRescoreRunning = false
 
-    static func historyRepairIsPending(effortDone: Bool, sleepWearDone: Bool) -> Bool {
-        !effortDone || !sleepWearDone
+    /// Completion flag for the calorie-model upgrade (Mifflin-St Jeor resting energy, the HR + wrist
+    /// motion active-energy blend and strength damping). `activeKcalEst` rows computed by an older build
+    /// still carry the revised Harris-Benedict, HR-only figure, and the normal 21-day window never
+    /// revisits them, so trends would mix both models. The shared full-history pass recomputes every day
+    /// with raw data once; days with no retained raw data keep their stored value.
+    static let calorieRescoreFlagKey = "intelligence.calorieRescore.v1.done"
+
+    static func historyRepairIsPending(effortDone: Bool, sleepWearDone: Bool, calorieDone: Bool) -> Bool {
+        !effortDone || !sleepWearDone || !calorieDone
+    }
+
+    func runCalorieRescoreIfNeeded(historyDays: Int = 4000) async {
+        await runHistoryRepairIfNeeded(historyDays: historyDays)
     }
 
     func runSleepWearRescoreIfNeeded(historyDays: Int = 4000) async {
@@ -687,7 +699,8 @@ final class IntelligenceEngine: ObservableObject {
     private func runHistoryRepairIfNeeded(historyDays: Int) async {
         guard Self.historyRepairIsPending(
                   effortDone: UserDefaults.standard.bool(forKey: Self.effortRescoreFlagKey),
-                  sleepWearDone: UserDefaults.standard.bool(forKey: Self.sleepWearRescoreFlagKey)),
+                  sleepWearDone: UserDefaults.standard.bool(forKey: Self.sleepWearRescoreFlagKey),
+                  calorieDone: UserDefaults.standard.bool(forKey: Self.calorieRescoreFlagKey)),
               !sleepWearRescoreRunning, !computing, !Task.isCancelled,
               !RescoreBackgroundScheduler.isBackgrounded else { return }
         // Launch and scene activation can overlap while the store handle is being awaited.
@@ -697,6 +710,7 @@ final class IntelligenceEngine: ObservableObject {
                             preserveUnscoredHistory: true) {
             UserDefaults.standard.set(true, forKey: Self.effortRescoreFlagKey)
             UserDefaults.standard.set(true, forKey: Self.sleepWearRescoreFlagKey)
+            UserDefaults.standard.set(true, forKey: Self.calorieRescoreFlagKey)
         }
     }
 

@@ -1452,6 +1452,17 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_SLEEP_WEAR_RESCORE_DONE, true).apply()
     }
 
+    /** Calorie-model upgrade (Mifflin-St Jeor + HR/motion blend): set with the other history-repair
+     *  flags once the shared full-history pass returns, so older activeKcalEst rows are recomputed once. */
+    const val KEY_CALORIE_RESCORE_DONE = "intelligence.calorieRescore.v1.done"
+
+    fun calorieRescoreDone(context: Context): Boolean =
+        of(context).getBoolean(KEY_CALORIE_RESCORE_DONE, false)
+
+    fun setCalorieRescoreDone(context: Context) {
+        of(context).edit().putBoolean(KEY_CALORIE_RESCORE_DONE, true).apply()
+    }
+
     /** Whether the one-shot #547 implausible-timestamp heal has run. Set true once it completes so the
      *  on-upgrade purge of bad-strap-clock rows (far-past / future-dated) never re-runs. Re-running is
      *  harmless (the deletes are idempotent), but the flag avoids the work on every launch. */

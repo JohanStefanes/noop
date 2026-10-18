@@ -509,8 +509,9 @@ final class AppModel: ObservableObject {
             // flag → no-op on every subsequent launch; idempotent on a clean DB.
             await self.intelligence.runTimestampHealIfNeeded()
             // One-shot on-upgrade Effort rescore (#313): recompute strain from source across the FULL
-            // history and repair sleep rejected by unmatched WRIST_OFF in one pass. Both persisted flags
-            // describe that shared pass; either pending flag triggers it.
+            // history and repair sleep rejected by unmatched WRIST_OFF in one pass. The same pass also
+            // recomputes historical day calories after the Mifflin-St Jeor + HR/motion model change. All
+            // three persisted flags describe that shared pass; any pending flag triggers it.
             await self.intelligence.runEffortRescoreIfNeeded()
             while !Task.isCancelled {
                 // #547 RE-POLLUTION: a sync since the last tick may have armed a re-heal (its ingest gate

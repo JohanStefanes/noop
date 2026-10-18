@@ -15,6 +15,7 @@ final class SleepWearHistoryRepairTests: XCTestCase {
             "profile.stepsCalibrationConfidence", "profile.stepsCalibrationManual",
             "profile.stepsManualCoefficient", "profile.stepsHasBankedMotion",
             IntelligenceEngine.effortRescoreFlagKey, IntelligenceEngine.sleepWearRescoreFlagKey,
+            IntelligenceEngine.calorieRescoreFlagKey,
             "noop.analyzeWatermark", "analyzeRecent.stepsMotionCache.v1",
             "noop.hrvBaselineEpoch", "noop.recoveryBaselineEpoch", UnitPrefs.hrvWindowKey,
             RescoreBackgroundScheduler.owedKey, RescoreBackgroundScheduler.owedTokenKey,
@@ -35,11 +36,62 @@ final class SleepWearHistoryRepairTests: XCTestCase {
         try await body()
     }
 
-    func testEitherPendingFlagSchedulesExactlyOneSharedRepair() {
-        XCTAssertTrue(IntelligenceEngine.historyRepairIsPending(effortDone: false, sleepWearDone: false))
-        XCTAssertTrue(IntelligenceEngine.historyRepairIsPending(effortDone: true, sleepWearDone: false))
-        XCTAssertTrue(IntelligenceEngine.historyRepairIsPending(effortDone: false, sleepWearDone: true))
-        XCTAssertFalse(IntelligenceEngine.historyRepairIsPending(effortDone: true, sleepWearDone: true))
+    func testAnyPendingFlagSchedulesExactlyOneSharedRepair() {
+        for effort in [false, true] {
+            for sleepWear in [false, true] {
+                for calorie in [false, true] {
+                    XCTAssertEqual(
+                        IntelligenceEngine.historyRepairIsPending(
+                            effortDone: effort, sleepWearDone: sleepWear, calorieDone: calorie),
+                        !(effort && sleepWear && calorie))
+                }
+            }
+        }
+    }
+
+    /// A build that already ran the Effort and sleep-wear repairs still owes the calorie-model pass:
+    /// a day older than the 21-day window keeps its stale `activeKcalEst` until that pass runs once.
+    func testCaloriePendingAloneRecomputesOldDayCaloriesOnce() async throws {
+        try await withPreferences {
+            UserDefaults.standard.set(true, forKey: IntelligenceEngine.effortRescoreFlagKey)
+            UserDefaults.standard.set(true, forKey: IntelligenceEngine.sleepWearRescoreFlagKey)
+            let store = try await WhoopStore.inMemory()
+            let source = "my-whoop"
+            let registry = DeviceRegistryStore(dbQueue: store.registryWriter)
+            try registry.add(PairedDevice(id: source, brand: "WHOOP", model: "4.0",
+                sourceKind: .liveBLE, capabilities: [.hr, .hrv], status: .active, addedAt: 1, lastSeenAt: 1))
+            let now = Int(Date().timeIntervalSince1970)
+            let tz = TimeZone.current.secondsFromGMT()
+            let dayStart = IntelligenceEngine.midnightLocal(now, offsetSec: tz) - 35 * 86400
+            let start = dayStart + 10 * 3600, end = start + 3600
+            let hr = stride(from: start, through: end, by: 5).map { HRSample(ts: $0, bpm: 120) }
+            _ = try await store.insert(Streams(hr: hr), deviceId: source)
+            let day = AnalyticsEngine.dayString(dayStart, offsetSec: tz)
+            // The value an older calorie model left behind; no current model produces exactly 1 kcal.
+            let stale = DailyMetric(day: day, totalSleepMin: nil, efficiency: nil, deepMin: nil,
+                remMin: nil, lightMin: nil, disturbances: nil, restingHr: nil, avgHrv: nil,
+                recovery: nil, strain: 5, exerciseCount: 0, activeKcalEst: 1)
+            _ = try await store.upsertDailyMetrics([stale], deviceId: source + "-noop")
+            let repo = Repository(deviceId: source)
+            repo.setStoreForTesting(store)
+            let engine = IntelligenceEngine(repo: repo, profile: ProfileStore(), deviceId: source)
+            defer { engine.diagnosticSink = nil }
+            var triggers = 0
+            engine.diagnosticSink = { line, _ in
+                if line.contains("trigger=sleep-wear-history-repair") { triggers += 1 }
+            }
+            await engine.analyzeRecent(maxDays: 21)
+            let before = try await store.dailyMetrics(deviceId: source + "-noop", from: day, to: day)
+            XCTAssertEqual(before.first?.activeKcalEst, 1, "The recent window must not reach this day")
+            await engine.runCalorieRescoreIfNeeded(historyDays: 40)
+            XCTAssertTrue(UserDefaults.standard.bool(forKey: IntelligenceEngine.calorieRescoreFlagKey))
+            let after = try await store.dailyMetrics(deviceId: source + "-noop", from: day, to: day)
+            let kcal = try XCTUnwrap(after.first?.activeKcalEst)
+            XCTAssertNotEqual(kcal, 1)
+            XCTAssertGreaterThan(kcal, 10)
+            await engine.runCalorieRescoreIfNeeded(historyDays: 40)
+            XCTAssertEqual(triggers, 1, "Completed calorie repair must not run on every launch")
+        }
     }
 
     func testRepairsOlderThan21DaysPersistsAndRunsOnlyOnce() async throws {
@@ -112,6 +164,7 @@ final class SleepWearHistoryRepairTests: XCTestCase {
             // Assert before yielding to the queued pass: only the repair itself may mark its flags.
             XCTAssertTrue(UserDefaults.standard.bool(forKey: IntelligenceEngine.sleepWearRescoreFlagKey))
             XCTAssertTrue(UserDefaults.standard.bool(forKey: IntelligenceEngine.effortRescoreFlagKey))
+            XCTAssertTrue(UserDefaults.standard.bool(forKey: IntelligenceEngine.calorieRescoreFlagKey))
             if queueForcedRescore {
                 await queuedCall?.value
                 XCTAssertTrue(queuedWasObserved, "The forced update must actually overlap the repair")
@@ -147,6 +200,7 @@ final class SleepWearHistoryRepairTests: XCTestCase {
             await engine.runSleepWearRescoreIfNeeded(historyDays: 40)
             XCTAssertFalse(UserDefaults.standard.bool(forKey: IntelligenceEngine.sleepWearRescoreFlagKey))
             XCTAssertFalse(UserDefaults.standard.bool(forKey: IntelligenceEngine.effortRescoreFlagKey))
+            XCTAssertFalse(UserDefaults.standard.bool(forKey: IntelligenceEngine.calorieRescoreFlagKey))
             engine.computing = false
             let task = Task { @MainActor in
                 await Task.yield()

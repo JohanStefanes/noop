@@ -244,8 +244,8 @@
     {
       "type": "out_of_scope_twin",
       "kind": "add-unpaired-function",
-      "identity": "kotlin\u0000android/app/src/main/java/com/noop/analytics/IntelligencePersistence.kt::historyRepairIsPending/2#1",
-      "identity_sha256": "b553cdaa03042d3839107a0526e2b89a6af987e0bd38e01cb883d961d004b3fd",
+      "identity": "kotlin\u0000android/app/src/main/java/com/noop/analytics/IntelligencePersistence.kt::historyRepairIsPending/3#1",
+      "identity_sha256": "bf56ad6033a6445f4b66dd0a7b2bcae056d224b12d4f013bca8b668fb44829b2",
       "platform": "kotlin",
       "rationale": "Swift IntelligenceEngine.historyRepairIsPending has the same repair-flag gate in the excluded app layer; both have direct truth-table coverage.",
       "twin_path": "Strand/Data/IntelligenceEngine.swift"

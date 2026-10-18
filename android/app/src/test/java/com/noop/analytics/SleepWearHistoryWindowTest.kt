@@ -7,11 +7,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SleepWearHistoryWindowTest {
-    @Test fun eitherPendingFlagSchedulesTheSharedRepairOnce() {
-        assertTrue(IntelligencePersistence.historyRepairIsPending(effortDone = false, sleepWearDone = false))
-        assertTrue(IntelligencePersistence.historyRepairIsPending(effortDone = true, sleepWearDone = false))
-        assertTrue(IntelligencePersistence.historyRepairIsPending(effortDone = false, sleepWearDone = true))
-        assertFalse(IntelligencePersistence.historyRepairIsPending(effortDone = true, sleepWearDone = true))
+    @Test fun anyPendingFlagSchedulesTheSharedRepairOnce() {
+        for (effort in listOf(false, true)) {
+            for (sleepWear in listOf(false, true)) {
+                for (calorie in listOf(false, true)) {
+                    assertEquals(
+                        !(effort && sleepWear && calorie),
+                        IntelligencePersistence.historyRepairIsPending(
+                            effortDone = effort, sleepWearDone = sleepWear, calorieDone = calorie,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     @Test fun repairNeverWidensWritesAcrossUnscoredHistory() {
