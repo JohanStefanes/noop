@@ -23,6 +23,9 @@ struct JohanMoreView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var behavior: BehaviorStore
     @Environment(\.scenePhase) private var scenePhase
+    /// The bedtime "no live heart rate" reminder (`JohanLiveLinkReminder`), and the capture it depends on.
+    @AppStorage(JohanLiveLinkReminder.enabledKey) private var liveLinkReminder = true
+    @AppStorage(PuffinExperiment.keepRealtimeForDataKey) private var continuousHrv = false
     /// iOS's own permission, re-read on appear and on return from the Settings app.
     @State private var notificationStatus: UNAuthorizationStatus?
 
@@ -185,6 +188,16 @@ struct JohanMoreView: View {
                 alertToggle("Early illness signs", "cross.case.fill", tint: JohanTheme.recoveryRed,
                             detail: "When two or more signals drift together. At most once a day; needs 14 days of history.",
                             isOn: $behavior.illnessWatch)
+                rowDivider
+                // Without Continuous HRV capture there is no overnight live stream, so the reminder never
+                // runs; the switch says so instead of showing an "on" that cannot fire.
+                alertToggle("No live heart rate at bedtime", "antenna.radiowaves.left.and.right",
+                            tint: JohanTheme.sleepViolet,
+                            detail: continuousHrv
+                                ? "In the evening, when NOOP stops receiving live heart rate, for example after it was swiped away."
+                                : "Needs Continuous HRV capture, which records the night live.",
+                            isOn: $liveLinkReminder)
+                    .disabled(!continuousHrv)
             }
         }
         .onChange(of: behavior.illnessWatch) { _, _ in model.reevaluateIllness() }
