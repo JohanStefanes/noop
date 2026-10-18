@@ -541,7 +541,7 @@ struct JohanHomeView: View {
                         .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
                 }
                 Divider().overlay(JohanTheme.cardBorder)
-                NavigationLink { MetricExplorerView() } label: {
+                NavigationLink { MetricExplorerView().johanGlassScreen() } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "chart.xyaxis.line").font(.system(.footnote, weight: .semibold))
                             .foregroundStyle(JohanTheme.strainBlue)

@@ -481,6 +481,9 @@ struct MetricExplorerView: View {
     /// hint in the header, never gating the rows: the catalog is static, so every row's label/icon/unit
     /// must paint immediately even before any series read returns (#199).
     @State private var probing = true
+    /// `.glass` when hosted by the iOS JohanUI shell: rows take its grouped-list look.
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+    private var isGlass: Bool { surfaceStyle == .glass }
 
     var body: some View {
         #if os(macOS)
@@ -512,7 +515,7 @@ struct MetricExplorerView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Scanning your data…")
-                        .font(StrandFont.footnote)
+                        .font(isGlass ? StrandFont.glassFootnote : StrandFont.footnote)
                         .foregroundStyle(StrandPalette.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -566,8 +569,9 @@ struct MetricExplorerView: View {
                                     })
                                     #endif
                                     if idx < metrics.count - 1 {
-                                        Divider().overlay(StrandPalette.hairline)
-                                            .padding(.leading, 56)
+                                        // Inset past the icon tile, like a system grouped list.
+                                        Divider().overlay(isGlass ? NoopVisualStyle.glassBorder : StrandPalette.hairline)
+                                            .padding(.leading, isGlass ? 16 + 30 + 14 : 56)
                                     }
                                 }
                             }
@@ -588,7 +592,7 @@ struct MetricExplorerView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(StrandPalette.metricRose.opacity(0.16))
+                        .fill(StrandPalette.metricRose.opacity(isGlass ? 0.14 : 0.16))
                     Image(systemName: "waveform.path.ecg")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(StrandPalette.metricRose)
@@ -597,12 +601,12 @@ struct MetricExplorerView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Deep Timeline")
-                        .font(StrandFont.body)
+                        .font(isGlass ? StrandFont.glassHeadline : StrandFont.body)
                         .fontWeight(.semibold)
                         .foregroundStyle(StrandPalette.textPrimary)
                     Text("Every second of your day, zoomable.")
-                        .font(StrandFont.footnote)
-                        .foregroundStyle(StrandPalette.textTertiary)
+                        .font(isGlass ? StrandFont.glassFootnote : StrandFont.footnote)
+                        .foregroundStyle(isGlass ? StrandPalette.textSecondary : StrandPalette.textTertiary)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
@@ -646,6 +650,8 @@ struct MetricExplorerView: View {
 private struct MetricRow: View {
     let metric: MetricDescriptor
     let isEmpty: Bool
+    /// `.glass` when hosted by the iOS JohanUI shell: the row takes its grouped-list look.
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
 
     // Trailing unit chip follows the Imperial/Metric preference (kg→lb, °C→°F) and the Effort scale
     // (/100→/21, #268).
@@ -660,6 +666,53 @@ private struct MetricRow: View {
     }
 
     var body: some View {
+        if surfaceStyle == .glass { glassBody } else { standardBody }
+    }
+
+    /// The JohanUI grouped-list row: a tinted glyph on a faint wash of its own colour, system text styles,
+    /// and "No data" spelled out in place of the unit rather than a bare dot beside it.
+    private var glassBody: some View {
+        HStack(spacing: 14) {
+            Image(systemName: metric.icon)
+                .font(.system(.subheadline, weight: .semibold))
+                .foregroundStyle(metricAccent(metric))
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(metricAccent(metric).opacity(0.14)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(metric.title)
+                    .font(.system(.body))
+                    .foregroundStyle(isEmpty ? StrandPalette.textSecondary : StrandPalette.textPrimary)
+                    .lineLimit(2)
+                Text(metric.sourceLabel)
+                    .font(StrandFont.glassFootnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+
+            Spacer(minLength: 8)
+
+            if isEmpty {
+                Text("No data")
+                    .font(StrandFont.glassFootnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            } else if !unitLabel.isEmpty {
+                Text(unitLabel)
+                    .font(StrandFont.glassFootnote)
+                    .foregroundStyle(StrandPalette.textSecondary)
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(.footnote, weight: .semibold))
+                .foregroundStyle(StrandPalette.textTertiary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .modifier(MetricRowAccessibility(metric: metric, isEmpty: isEmpty, unitLabel: unitLabel))
+    }
+
+    private var standardBody: some View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -700,12 +753,24 @@ private struct MetricRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        // Whole-string key per variant (never a concatenated localized tail on an a11y label).
-        .accessibilityLabel(isEmpty
-            ? "\(metric.title), \(unitLabel.isEmpty ? MetricCatalog.categoryDisplayName(metric.category) : unitLabel), no data"
-            : "\(metric.title), \(unitLabel.isEmpty ? MetricCatalog.categoryDisplayName(metric.category) : unitLabel)")
-        .accessibilityAddTraits(.isButton)
+        .modifier(MetricRowAccessibility(metric: metric, isEmpty: isEmpty, unitLabel: unitLabel))
+    }
+}
+
+/// One spoken label for both row looks, so the glass and the standard row cannot announce differently.
+private struct MetricRowAccessibility: ViewModifier {
+    let metric: MetricDescriptor
+    let isEmpty: Bool
+    let unitLabel: String
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityElement(children: .combine)
+            // Whole-string key per variant (never a concatenated localized tail on an a11y label).
+            .accessibilityLabel(isEmpty
+                ? "\(metric.title), \(unitLabel.isEmpty ? MetricCatalog.categoryDisplayName(metric.category) : unitLabel), no data"
+                : "\(metric.title), \(unitLabel.isEmpty ? MetricCatalog.categoryDisplayName(metric.category) : unitLabel)")
+            .accessibilityAddTraits(.isButton)
     }
 }
 

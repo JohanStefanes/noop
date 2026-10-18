@@ -80,8 +80,9 @@ struct JohanMoreView: View {
         ]
     }
 
-    /// The original screens drawn in the JohanUI look: Trends and the settings screens in "Strap & App".
-    private static let glassRowIDs: Set<String> = ["trends", "alarms", "devices", "backup", "settings"]
+    /// The original screens drawn in the JohanUI look: Trends, the Metric Explorer and the settings screens in
+    /// "Strap & App".
+    private static let glassRowIDs: Set<String> = ["trends", "explore", "alarms", "devices", "backup", "settings"]
 
     /// An original screen in the JohanUI chrome. Glass screens also switch their cards to glass on black
     /// and their switches to the JohanUI tint, which carries into the screens they push.
@@ -89,13 +90,7 @@ struct JohanMoreView: View {
     private func destination(_ row: Row, glass: Bool) -> some View {
         let screen = JohanStaticDestination(content: row.destination).equatable()
         if glass {
-            screen
-                .environment(\.noopSurfaceStyle, .glass)
-                // The shell tints white; a white switch on a dark card reads as off.
-                .tint(JohanTheme.sleepViolet)
-                .background(JohanTheme.background.ignoresSafeArea())
-                .navigationBarTitleDisplayMode(.inline)
-                .modifier(JohanPushedBarBackground())
+            screen.johanGlassScreen()
         } else {
             screen
                 .background(JohanTheme.background.ignoresSafeArea())
@@ -388,6 +383,21 @@ private struct JohanStaticDestination: View, Equatable {
     let content: AnyView
     static func == (lhs: Self, rhs: Self) -> Bool { true }
     var body: some View { content }
+}
+#endif
+
+#if os(iOS)
+extension View {
+    /// An original NOOP screen pushed from the JohanUI shell, drawn in its look: glass cards on black, and
+    /// switches in the JohanUI tint, which carries into the screens it pushes.
+    func johanGlassScreen() -> some View {
+        environment(\.noopSurfaceStyle, .glass)
+            // The shell tints white; a white switch on a dark card reads as off.
+            .tint(JohanTheme.sleepViolet)
+            .background(JohanTheme.background.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .modifier(JohanPushedBarBackground())
+    }
 }
 #endif
 
