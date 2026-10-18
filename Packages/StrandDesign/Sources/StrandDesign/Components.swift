@@ -177,11 +177,17 @@ public struct SectionHeader: View {
     public init(_ title: LocalizedStringKey, overline: LocalizedStringKey? = nil, trailing: String? = nil) {
         self.title = title; self.overline = overline; self.trailing = trailing
     }
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
     public var body: some View {
+        let isGlass = surfaceStyle == .glass
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                if let overline { Text(overline).strandOverline() }
-                Text(title).font(StrandFont.title2).foregroundStyle(StrandPalette.textPrimary)
+                // Glass drops the eyebrow and sets the title as a grouped-list headline, like SettingsSection.
+                if let overline, !isGlass { Text(overline).strandOverline() }
+                Text(title)
+                    .font(isGlass ? StrandFont.glassHeadline : StrandFont.title2)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                    .accessibilityAddTraits(isGlass ? .isHeader : [])
             }
             Spacer()
             if let trailing {
@@ -328,13 +334,25 @@ public struct ChartCard<ChartBody: View, Footer: View>: View {
         self.height = height; self.tint = tint; self.chart = chart; self.footer = footer
     }
 
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+
     public var body: some View {
+        let isGlass = surfaceStyle == .glass
         NoopCard(tint: tint) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(title).strandOverline()
-                        if let subtitle { Text(subtitle).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary) }
+                        if isGlass {
+                            // The card's title as a headline, the way the glass shell titles a card.
+                            Text(title).font(StrandFont.glassHeadline).foregroundStyle(StrandPalette.textPrimary)
+                        } else {
+                            Text(title).strandOverline()
+                        }
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(isGlass ? StrandFont.glassFootnote : StrandFont.footnote)
+                                .foregroundStyle(StrandPalette.textTertiary)
+                        }
                     }
                     Spacer()
                     if let trailing { Text(trailing).font(StrandFont.bodyNumber).foregroundStyle(StrandPalette.textPrimary) }
@@ -354,11 +372,16 @@ public struct ChartCard<ChartBody: View, Footer: View>: View {
 public struct ChartFooter: View {
     let items: [(LocalizedStringKey, String)]
     public init(_ items: [(LocalizedStringKey, String)]) { self.items = items }
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
     public var body: some View {
+        let isGlass = surfaceStyle == .glass
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, it in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(it.0).textCase(.uppercase).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                    // Glass: sentence-case labels, no ALL-CAPS column heads.
+                    Text(it.0).textCase(isGlass ? nil : .uppercase)
+                        .font(isGlass ? StrandFont.glassFootnote : StrandFont.footnote)
+                        .foregroundStyle(StrandPalette.textTertiary)
                     Text(it.1).font(StrandFont.captionNumber).foregroundStyle(StrandPalette.textSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

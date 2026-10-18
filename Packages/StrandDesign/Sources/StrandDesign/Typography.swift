@@ -68,6 +68,8 @@ public enum StrandFont {
     public static let glassHeadline = Font.system(.headline)
     /// Footnote, explanatory copy under a title.
     public static let glassFootnote = Font.system(.footnote)
+    /// Subheadline / Semibold, a sentence-case label in place of the tracked ALL-CAPS overline.
+    public static let glassOverline = Font.system(.subheadline, weight: .semibold)
 
     /// Overline 11 / Bold, +1.4 tracking (apply `.tracking(1.4)` at use site;
     /// `overlineText(_:)` does it for you). Sparing ALL-CAPS labels. Scales with Dynamic Type.
@@ -128,12 +130,28 @@ public enum StrandFont {
 // MARK: - Text helpers
 
 public extension Text {
-    /// Style as an overline label: ALL-CAPS, bold, +1.4 tracking, tertiary text.
+    /// Style as an overline label: ALL-CAPS, bold, +1.4 tracking, tertiary text. Under
+    /// `NoopSurfaceStyle.glass` it is a plain sentence-case label instead, as the glass shell sets them.
     func strandOverline() -> some View {
-        self.font(StrandFont.overline)
-            .tracking(StrandFont.overlineTracking)
-            .textCase(.uppercase)
-            .foregroundStyle(StrandPalette.textSecondary)
+        modifier(StrandOverlineStyle())
+    }
+}
+
+private struct StrandOverlineStyle: ViewModifier {
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
+
+    func body(content: Content) -> some View {
+        if surfaceStyle == .glass {
+            content
+                .font(StrandFont.glassOverline)
+                .foregroundStyle(StrandPalette.textSecondary)
+        } else {
+            content
+                .font(StrandFont.overline)
+                .tracking(StrandFont.overlineTracking)
+                .textCase(.uppercase)
+                .foregroundStyle(StrandPalette.textSecondary)
+        }
     }
 }
 

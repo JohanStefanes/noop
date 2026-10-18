@@ -15,6 +15,8 @@ import Foundation
 struct TrendsView: View {
     @EnvironmentObject var repo: Repository
     @Environment(\.locale) private var locale
+    /// `.glass` when hosted by the iOS JohanUI More tab: labels follow its sentence-case set.
+    @Environment(\.noopSurfaceStyle) private var surfaceStyle
     // NOTE: deliberately does NOT observe LiveState — Trends shows historical data only, and
     // observing it forced a full re-render of this subtree on every ~1 Hz live-HR tick.
 
@@ -222,8 +224,8 @@ struct TrendsView: View {
                 // Match the neighbouring ChartFooter columns so the delta is self-describing instead
                 // of appearing as an unlabeled pill at the edge of the statistics row.
                 Text("Trend")
-                    .textCase(.uppercase)
-                    .font(StrandFont.footnote)
+                    .textCase(surfaceStyle == .glass ? nil : .uppercase)
+                    .font(surfaceStyle == .glass ? StrandFont.glassFootnote : StrandFont.footnote)
                     .foregroundStyle(StrandPalette.textTertiary)
                 TrendChip(text: deltaText, color: color)
             }
@@ -531,11 +533,7 @@ struct TrendsView: View {
     private func pipScoreRow(label: LocalizedStringKey, value: Double, range: ClosedRange<Double>,
                              tint: Color, frac: Double, format: @escaping (Double) -> String) -> some View {
         VStack(alignment: .leading, spacing: NoopMetrics.space2) {
-            Text(label)
-                .font(StrandFont.overline)
-                .tracking(StrandFont.overlineTracking)
-                .textCase(.uppercase)
-                .foregroundStyle(StrandPalette.textSecondary)
+            Text(label).strandOverline()
             HStack(spacing: NoopMetrics.space3) {
                 // Static (posed) vessel — a small liquid gauge, not a live 60fps canvas, so the three
                 // in this card cost a single cached frame each (same call as Today's small vessels).

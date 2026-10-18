@@ -80,15 +80,15 @@ struct JohanMoreView: View {
         ]
     }
 
-    /// The original settings screens in "Strap & App", drawn in the JohanUI look.
-    private static let settingsRowIDs: Set<String> = ["alarms", "devices", "backup", "settings"]
+    /// The original screens drawn in the JohanUI look: Trends and the settings screens in "Strap & App".
+    private static let glassRowIDs: Set<String> = ["trends", "alarms", "devices", "backup", "settings"]
 
-    /// An original screen in the JohanUI chrome. Settings screens also switch their cards to glass on black
+    /// An original screen in the JohanUI chrome. Glass screens also switch their cards to glass on black
     /// and their switches to the JohanUI tint, which carries into the screens they push.
     @ViewBuilder
-    private func destination(_ row: Row, settingsGroup: Bool) -> some View {
+    private func destination(_ row: Row, glass: Bool) -> some View {
         let screen = JohanStaticDestination(content: row.destination).equatable()
-        if settingsGroup {
+        if glass {
             screen
                 .environment(\.noopSurfaceStyle, .glass)
                 // The shell tints white; a white switch on a dark card reads as off.
@@ -112,7 +112,7 @@ struct JohanMoreView: View {
                         VStack(spacing: 0) {
                             ForEach(group.rows) { row in
                                 NavigationLink {
-                                    destination(row, settingsGroup: Self.settingsRowIDs.contains(row.id))
+                                    destination(row, glass: Self.glassRowIDs.contains(row.id))
                                 } label: { rowLabel(row.title, row.icon, tint: row.tint) }
                                 .buttonStyle(JohanRowStyle())
                                 if row.id != group.rows.last?.id { rowDivider }
