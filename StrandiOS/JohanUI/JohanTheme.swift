@@ -278,6 +278,7 @@ struct JohanScreen<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @EnvironmentObject private var repo: Repository
     @Environment(\.johanRequestReload) private var requestReload
+    @StateObject private var refresh = JohanRefreshState()
 
     var body: some View {
         ScrollView {
@@ -287,12 +288,21 @@ struct JohanScreen<Content: View>: View {
             .padding(.horizontal, JohanTheme.Metrics.screenHPadding)
             .padding(.top, 8)
             .padding(.bottom, 32)
+            .background(JohanScrollProbe(state: refresh).frame(width: 0, height: 0))
         }
         .scrollIndicators(.hidden)
         // Pull to refresh re-reads the store, then reloads every screen even when no stored row changed.
         .refreshable {
+            let start = Date()
+            refresh.phase = .refreshing
+            StrandHaptic.light.play()
             await repo.refresh()
             requestReload()
+            let left = JohanTheme.Motion.refreshMinDuration - Date().timeIntervalSince(start)
+            await JohanRefreshState.hold(left)
+            refresh.phase = .done
+            StrandHaptic.success.play()
+            await JohanRefreshState.hold(JohanTheme.Motion.refreshCloseHold)
         }
         .background(JohanTheme.background.ignoresSafeArea())
         .navigationTitle(title)
