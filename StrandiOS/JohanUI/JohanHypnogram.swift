@@ -11,8 +11,9 @@ import StrandDesign
 /// length (never less than five minutes). That is display only: the stage totals and the phase list keep
 /// the raw timeline, and the phase list is where the short stretches stay readable.
 ///
-/// Draws `intervals` (seconds after `nightStart`) across `nightStart ... nightEnd`, the same span the card
-/// names as "Fell asleep" and "Woke up", so its flags can never disagree with those figures. Brief
+/// Draws `intervals` (seconds after `nightStart`) across `nightStart ... nightEnd`: from the card's "In bed"
+/// to its "Woke up". The moon flag sits at `sleepOnset`, the same offset the card names as "Fell asleep", and
+/// the sun flag at `nightEnd`, so the flags can never disagree with those figures. Brief
 /// fragments are absorbed for display only (`Hypnogram.displaySmoothed`); the stage totals and the phase
 /// list keep the raw timeline.
 ///
@@ -23,6 +24,8 @@ struct JohanHypnogram: View {
     let intervals: [SleepInterval]
     let nightStart: Date
     let nightEnd: Date
+    /// When sleep began, in seconds after `nightStart`; the moon flag sits here. 0 = at bed time.
+    var sleepOnset: TimeInterval = 0
     var height: CGFloat = 200
     /// The marked moment, in seconds after `nightStart`. Owned by the caller so a phase list can set it.
     var selectedTime: Binding<TimeInterval?> = .constant(nil)
@@ -70,7 +73,8 @@ struct JohanHypnogram: View {
                                 Rectangle().frame(width: max(0, w * reveal))
                             }
                             .padding(.top, Self.flagHeight)
-                        flag(icon: "moon.fill", time: nightStart, x: 0, width: w)
+                        flag(icon: "moon.fill", time: nightStart.addingTimeInterval(sleepOnset),
+                             x: x(min(max(0, sleepOnset), span), w), width: w)
                         flag(icon: "sun.max.fill", time: nightEnd, x: w, width: w)
                         if let t = selectedTime.wrappedValue {
                             selectionRule(x: x(t, w))

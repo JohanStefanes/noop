@@ -236,11 +236,10 @@ struct JohanSleepCoachView: View {
                             .rotationEffect(.degrees(showsNightDetails ? 180 : 0))
                             .accessibilityHidden(true)
                     }
-                    statsLayout([(String(localized: "Fell asleep"), night.onsetText),
-                                 (String(localized: "Woke up"), night.wakeText)])
+                    statsLayout(Self.bedAndSleepStats(night, intervals: sleep.intervals))
                     if showsNightDetails {
                         Divider().overlay(JohanTheme.cardBorder)
-                        statsLayout([(String(localized: "In bed"), hm(night.timeInBed)),
+                        statsLayout([(String(localized: "Time in bed"), hm(night.timeInBed)),
                                      (String(localized: "Awake"), hm(night.stages.awake)),
                                      (String(localized: "Times awake"), String(Self.wakeUps(sleep.intervals)))])
                             .transition(.opacity)
@@ -277,6 +276,25 @@ struct JohanSleepCoachView: View {
         }
     }
 
+    /// When the night's first stretch of sleep began, in seconds after the night's start (bed time): the
+    /// start of the first non-awake interval, or 0 when the night has none.
+    static func sleepOnsetOffset(_ intervals: [SleepInterval]) -> TimeInterval {
+        intervals.filter { $0.stage != .awake }.map(\.start).min().map { max(0, $0) } ?? 0
+    }
+
+    /// "In bed", "Fell asleep" and "Woke up". The night starts when the wearer lay still in bed, which can
+    /// be well before sleep began, so the two are named apart; "In bed" is left out when they match to the
+    /// minute. "Fell asleep" and the stage chart's moon flag both read `sleepOnsetOffset`.
+    static func bedAndSleepStats(_ night: Night, intervals: [SleepInterval]) -> [(String, String)] {
+        let fmt = AppClock.hourMinuteFormatter()
+        let onset = sleepOnsetOffset(intervals)
+        var items: [(String, String)] = []
+        if onset >= 60 { items.append((String(localized: "In bed"), fmt.string(from: night.onsetDate))) }
+        items.append((String(localized: "Fell asleep"), fmt.string(from: night.onsetDate.addingTimeInterval(onset))))
+        items.append((String(localized: "Woke up"), night.wakeText))
+        return items
+    }
+
     /// Awake phases between the first and the last stretch of sleep: waking up during the night, not the
     /// minutes before falling asleep or after the final wake.
     static func wakeUps(_ intervals: [SleepInterval]) -> Int {
@@ -293,6 +311,7 @@ struct JohanSleepCoachView: View {
                            String(localized: "Which stage you were in through the night, and how long each lasted."))
                 JohanHypnogram(intervals: sleep.intervals, nightStart: sleep.night.onsetDate,
                                nightEnd: Date(timeIntervalSince1970: TimeInterval(sleep.night.session.endTs)),
+                               sleepOnset: Self.sleepOnsetOffset(sleep.intervals),
                                selectedTime: $selectedTime, highlightedStage: highlightedStage)
                 stagesVsTypical(sleep)
                 phaseList(sleep)
