@@ -2889,4 +2889,6 @@
     <string name="raw_diag_ecg_probe_running">A capture may still be running on this strap. The verdict goes to the strap log.</string>
     <string name="today_customize_live_session_availability">Appears today when Live Sessions is enabled in Settings or a session is active.</string>
     <string name="l10n_app_changelog_today_your_way_heart_rate_any_5e1308b3">Today your way, heart rate any app can read, and Italian</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_title">Heart-rate sleep onset</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_caption">Lying still but awake in bed can look like sleep. With this on, the start of each night counts as awake until your heart rate settles to its sleeping level, so the time you fell asleep moves to when that happened. Nights you corrected by hand are left alone. Off by default; takes effect on the next nights staged.</string>
 </resources>

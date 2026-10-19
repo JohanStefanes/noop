@@ -41,13 +41,13 @@ class DayCacheConfigFieldTest {
         assertEquals("rhrBaseline",
             IntelligenceEngine.changedConfigField(fullSig(), fullSig { it[1] = "moved" }))
         assertEquals("dayCycleMode",
-            IntelligenceEngine.changedConfigField(fullSig(), fullSig { it[15] = "moved" }))
+            IntelligenceEngine.changedConfigField(fullSig(), fullSig { it[16] = "moved" }))
     }
 
     /** Several at once happens on a settings change that touches more than one knob. */
     @Test
     fun `several movers are all named`() {
-        val after = fullSig { it[0] = "a"; it[14] = "b" }
+        val after = fullSig { it[0] = "a"; it[15] = "b" }
         assertEquals("hrvBaseline+effortMethod",
             IntelligenceEngine.changedConfigField(fullSig(), after))
     }
@@ -80,7 +80,7 @@ class DayCacheConfigFieldTest {
                 "hrvBaseline", "rhrBaseline", "age", "sex", "stepTicksPerStep", "maxHROverride",
                 "tzOffset", "sleepNeedHours", "sleepConsistency", "habitualMidsleep",
                 "experimentalSleepV2", "motionAwareWake", "deepHrvWindow", "spo2CandidateDisplay",
-                "effortMethod", "dayCycleMode",
+                "hrSleepOnset", "effortMethod", "dayCycleMode",
             ),
             IntelligenceEngine.DAY_CACHE_CONFIG_FIELDS,
         )

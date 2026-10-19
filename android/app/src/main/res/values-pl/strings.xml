@@ -2876,4 +2876,6 @@
     <string name="raw_diag_ecg_probe_running">Na tym pasku może nadal trwać zapis. Werdykt trafia do strap log.</string>
     <string name="today_customize_live_session_availability">Pojawia się dzisiaj, gdy sesje na żywo są włączone w Ustawieniach lub trwa sesja.</string>
     <string name="l10n_app_changelog_today_your_way_heart_rate_any_5e1308b3">Dziś po swojemu, tętno dostępne dla każdej aplikacji i język włoski</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_title">Zasypianie według tętna</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_caption">Leżenie nieruchomo, ale bez snu, może wyglądać jak sen. Po włączeniu początek każdej nocy liczy się jako czuwanie, dopóki tętno nie spadnie do poziomu snu, a czas zaśnięcia przesuwa się na ten moment. Noce poprawione ręcznie pozostają bez zmian. Domyślnie wyłączone; działa od kolejnych analizowanych nocy.</string>
 </resources>

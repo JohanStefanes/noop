@@ -462,6 +462,9 @@ object IntelligenceEngine {
         // OWN observed gravity + step density (see [WakeMotionRefinement]), so existing callers / tests
         // and any night too sparse to trust (e.g. a WHOOP 4.0) are unaffected either way.
         useMotionAwareWake: Boolean = false,
+        // Opt-in heart-rate sleep onset ([HrSleepOnsetRefinement]), same Context-free threading: the caller
+        // reads PuffinExperiment.from(context).hrSleepOnset. Default false. Detection path only.
+        useHrSleepOnset: Boolean = false,
         // Sleep & Rest test-mode trace sink (Test Centre E5). The analytics layer is Context-free, so the
         // Context-aware caller (AppViewModel / WhoopBleClient) reads TestCentre.active(SLEEP) and passes a
         // non-null sink ONLY when the mode is on, routing each line to the .sleep-tagged strap log. null (the
@@ -549,7 +552,7 @@ object IntelligenceEngine {
             }
             val (out, healed) = analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride,
                 nowSeconds, ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch,
-                recoveryEpoch, diag, useExperimentalSleepV2, useMotionAwareWake, sleepTraceSink, recoveryTraceSink,
+                recoveryEpoch, diag, useExperimentalSleepV2, useMotionAwareWake, useHrSleepOnset, sleepTraceSink, recoveryTraceSink,
                 stepsTraceSink, universalSink, workoutsTraceSink, hrvTraceSink, deepHrvWindow,
                 spo2CandidateDisplay, effortMethod, dayCycleMode)
             val result = if (healed == 0) out
@@ -560,7 +563,7 @@ object IntelligenceEngine {
             // are gone), so this can never loop. Mirrors the Swift pendingForcedRescore re-arm.
             else analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride,
                 nowSeconds, ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch,
-                recoveryEpoch, diag, useExperimentalSleepV2, useMotionAwareWake, sleepTraceSink, recoveryTraceSink,
+                recoveryEpoch, diag, useExperimentalSleepV2, useMotionAwareWake, useHrSleepOnset, sleepTraceSink, recoveryTraceSink,
                 stepsTraceSink, universalSink, workoutsTraceSink, hrvTraceSink, deepHrvWindow,
                 spo2CandidateDisplay, effortMethod, dayCycleMode).first
             // Write the pruned cache back, after the heal re-pass so the payload reflects whichever pass ran
@@ -654,6 +657,8 @@ object IntelligenceEngine {
         useExperimentalSleepV2: Boolean = false,
         // Opt-in motion-aware wake refinement (#364 follow-up), threaded the same way. Default false.
         useMotionAwareWake: Boolean = false,
+        // Opt-in heart-rate sleep onset, threaded the same way. Default false.
+        useHrSleepOnset: Boolean = false,
         // Sleep & Rest test-mode trace sink (Test Centre E5). null = byte-identical default; when non-null
         // each scored day threads it into AnalyticsEngine.analyzeDay so detectSleep's gate trace + the Rest
         // sub-score line forward line-by-line to the .sleep-tagged strap log. Mirrors Swift.
@@ -882,6 +887,8 @@ object IntelligenceEngine {
             sleepConsistency?.toString() ?: "nil", habitualMidsleepSec?.toString() ?: "nil",
             useExperimentalSleepV2.toString(), useMotionAwareWake.toString(),
             deepHrvWindow.toString(), spo2CandidateDisplay.toString(),
+            // Changes every detected night's stages, so a scan cached under the other value is stale.
+            useHrSleepOnset.toString(),
             // #1545: MUST be here. The Effort recipe changes every day's strain, so a cached scan
             // produced under one method is stale the moment the user switches — serving it would show a
             // window of days scored by a recipe the user just turned off, with nothing to explain it.
@@ -1212,6 +1219,7 @@ object IntelligenceEngine {
                 useSleepStagerV2 = useExperimentalSleepV2,
                 // #364 follow-up: same threading for the motion-aware wake refinement post-pass.
                 useMotionAwareWake = useMotionAwareWake,
+                useHrSleepOnset = useHrSleepOnset,
                 // #804 Fix A: the owner's own device-provided hypnogram (empty for WHOOP/non-ring days).
                 providedSleep = providedSleep,
                 // Sleep & Rest test mode (Test Centre E5): thread the trace sink straight through. null (the
@@ -2927,7 +2935,7 @@ object IntelligenceEngine {
         "hrvBaseline", "rhrBaseline", "age", "sex", "stepTicksPerStep", "maxHROverride",
         "tzOffset", "sleepNeedHours", "sleepConsistency", "habitualMidsleep",
         "experimentalSleepV2", "motionAwareWake", "deepHrvWindow", "spo2CandidateDisplay",
-        "effortMethod", "dayCycleMode",
+        "hrSleepOnset", "effortMethod", "dayCycleMode",
     )
 
     /** Which config field(s) changed between two signatures, for the `configDropped` tally.

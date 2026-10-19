@@ -98,6 +98,11 @@ struct SettingsView: View {
     /// WHOOP 4.0) regardless of this switch. See [PuffinExperiment.motionAwareWakeKey].
     @AppStorage(PuffinExperiment.motionAwareWakeKey) private var motionAwareWakeEnabled = false
 
+    /// "Heart-rate sleep onset" (OFF by default). A post-pass that relabels the still-but-awake head of a
+    /// detected night as wake, up to the first sustained drop of HR to the night's median. See
+    /// [PuffinExperiment.hrSleepOnsetKey].
+    @AppStorage(PuffinExperiment.hrSleepOnsetKey) private var hrSleepOnsetEnabled = false
+
     // Display preferences. `units.system` remains the body-measurement choice for compatibility;
     // exercise distance/pace can override it independently. Stored data is always SI.
     /// #1821: Clock format. Defaults to `.system`, so upgrading changes nobody's displayed times.
@@ -2009,6 +2014,22 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
                 Text("Reviews each scored wake block for real evidence of getting up (walking cadence, a change in body position) instead of just a heart-rate rise. A wake block with no locomotion and a stable posture — a hot night, a brief turn-over — is folded back into light sleep; a real get-up is left alone. Self-checks how much motion detail your strap actually recorded and stays off on a night that's too sparse to trust (older WHOOP 4.0 firmware, mainly). Off by default; takes effect on the next nights staged.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .settingsHelp()
+
+                rowDivider
+
+                // MARK: Heart-rate sleep onset — default OFF.
+                Toggle(isOn: $hrSleepOnsetEnabled) {
+                    Text("Heart-rate sleep onset")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("Lying still but awake in bed can look like sleep. With this on, the start of each night counts as awake until your heart rate settles to its sleeping level, so the time you fell asleep moves to when that happened. Nights you corrected by hand are left alone. Off by default; takes effect on the next nights staged.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

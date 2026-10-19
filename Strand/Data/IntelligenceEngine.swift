@@ -103,7 +103,7 @@ final class IntelligenceEngine: ObservableObject {
         "hrvBaseline", "rhrBaseline", "age", "sex", "stepTicksPerStep", "maxHROverride",
         "tzOffset", "sleepNeedHours", "sleepConsistency", "habitualMidsleep",
         "experimentalSleepV2", "motionAwareWake", "deepHrvWindow", "spo2CandidateDisplay",
-        "effortMethod", "dayCycleMode",
+        "hrSleepOnset", "effortMethod", "dayCycleMode",
     ]
 
     /// Which config field(s) moved between two signatures, for the `configDropped` tally.
@@ -1069,6 +1069,7 @@ final class IntelligenceEngine: ObservableObject {
         // detached loop.
         let useSleepStagerV2Global = PuffinExperiment.experimentalSleepV2Enabled
         let useMotionAwareWakeGlobal = PuffinExperiment.motionAwareWakeEnabled
+        let useHRSleepOnsetGlobal = PuffinExperiment.hrSleepOnsetEnabled
         // Cache eligibility for the whole pass: never reuse while a Test-Centre trace is active (a cached
         // scan carries no fresh gate trace). Owner-level eligibility (registered WHOOP) is checked per day.
         // #1575: an active trace no longer disables reuse. Swift was already safe by construction here —
@@ -1116,6 +1117,8 @@ final class IntelligenceEngine: ObservableObject {
             habitualMidsleepSec.map { "\($0)" } ?? "nil",
             "\(useSleepStagerV2Global)", "\(useMotionAwareWakeGlobal)", "\(deepHrvWindow)",
             "\(spo2CandidateDisplayOn)",
+            // Changes every detected night's stages, so a scan cached under the other value is stale.
+            "\(useHRSleepOnsetGlobal)",
             // #1545: MUST be here. The Effort recipe changes every day's strain, so a cached scan
             // produced under one method is stale the moment the user switches — serving it would show a
             // window of days scored by a recipe the user just turned off, with nothing to explain it.
@@ -1462,6 +1465,8 @@ final class IntelligenceEngine: ObservableObject {
                 // ever runs AFTER whichever stager above just ran, and self-gates on the night's observed
                 // gravity + step density, so flipping it on is a no-op for any night too sparse to trust.
                 let useMotionAwareWake = PuffinExperiment.motionAwareWakeEnabled
+                // Heart-rate sleep onset (Experimental, default OFF): read the same way.
+                let useHRSleepOnset = PuffinExperiment.hrSleepOnsetEnabled
 
                 // Already OFF the main actor , score directly (the prior nested `Task.detached` here only
                 // existed to hop off the main actor; the whole loop now runs off it, so the score is computed
@@ -1555,6 +1560,7 @@ final class IntelligenceEngine: ObservableObject {
                                                      // #364 follow-up: same threading for the motion-aware wake
                                                      // refinement post-pass.
                                                      useMotionAwareWake: useMotionAwareWake,
+                                                     useHRSleepOnset: useHRSleepOnset,
                                                      // #804 Fix A: the owner's own device-provided hypnogram
                                                      // (empty for WHOOP / non-ring days → default path).
                                                      providedSleep: providedSleep,

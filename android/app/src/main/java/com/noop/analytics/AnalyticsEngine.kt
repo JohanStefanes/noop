@@ -389,6 +389,12 @@ object AnalyticsEngine {
         // flag. Default false keeps every pure-function caller/test byte-identical; IntelligenceEngine
         // threads PuffinExperiment.from(context).motionAwareWake. Mirrors Swift.
         useMotionAwareWake: Boolean = false,
+        // Opt-in heart-rate sleep-onset refinement. When true, [HrSleepOnsetRefinement] relabels the head
+        // of each detected session as wake up to the first sustained drop of HR to the night's median, so a
+        // still-but-awake lead-in in bed stops counting as sleep. Runs after the motion-aware wake pass.
+        // Default false keeps every pure-function caller/test byte-identical; IntelligenceEngine threads
+        // PuffinExperiment.from(context).hrSleepOnset. Mirrors Swift.
+        useHrSleepOnset: Boolean = false,
         // Caller-supplied, already-staged sessions to fold in ALONGSIDE the motion detector's — the day
         // owner's OWN device-provided hypnogram (an Oura ring's SleepNet night, #773), reconstructed via
         // [sleepSessionFromProvided]. The fix for #804: a ring sends no gravity vector, so detectSleep stages
@@ -449,10 +455,17 @@ object AnalyticsEngine {
         // night-window stream the caller passed for the rest of this analysis; the pass self-gates on its
         // observed density, so an empty/sparse `steps` (e.g. a WHOOP 4.0, which never emits a step sample
         // at all) is a no-op regardless of `useMotionAwareWake`.
-        val refinedSessions = if (useMotionAwareWake) {
+        val motionRefinedSessions = if (useMotionAwareWake) {
             detectedSessions.map { WakeMotionRefinement.refine(it, gravity, steps) }
         } else {
             detectedSessions
+        }
+        // Heart-rate onset refinement: the still-but-awake head of a session becomes wake. Detected
+        // sessions only; provided (ring) hypnograms below bypass it like they bypass wake refinement.
+        val refinedSessions = if (useHrSleepOnset) {
+            motionRefinedSessions.map { HrSleepOnsetRefinement.refine(it, hr) }
+        } else {
+            motionRefinedSessions
         }
         // #804 Fix A: fold in the caller's device-provided hypnogram (see [providedSleep]). Empty = the
         // byte-identical motion-only path. Otherwise enrich each provided session's nightly restingHR/avgHRV

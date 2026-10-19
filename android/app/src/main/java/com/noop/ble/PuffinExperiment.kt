@@ -122,6 +122,16 @@ class PuffinExperiment(
         get() = prefs.getBoolean(KEY_MOTION_AWARE_WAKE, false)
         set(v) = prefs.edit().putBoolean(KEY_MOTION_AWARE_WAKE, v).apply()
 
+    /** True if the user opted in to "Heart-rate sleep onset" (default false): a post-pass
+     *  ([com.noop.analytics.HrSleepOnsetRefinement]) that relabels the head of each detected session as
+     *  wake up to the first sustained drop of HR to the night's own median, so lying still but awake in bed
+     *  stops counting as sleep and "Fell asleep" moves to when HR actually fell. Only ever adds wake at the
+     *  start of a session; hand-edited nights are never touched. Mirrors the macOS
+     *  `PuffinExperiment.hrSleepOnsetKey`. */
+    var hrSleepOnset: Boolean
+        get() = prefs.getBoolean(KEY_HR_SLEEP_ONSET, false)
+        set(v) = prefs.edit().putBoolean(KEY_HR_SLEEP_ONSET, v).apply()
+
     /**
      * Send the CLIENT_HELLO even when the suppression latch says not to (default false, #1635).
      *
@@ -268,7 +278,7 @@ class PuffinExperiment(
      * probe, all of which target hardware that may not support
      * them. Pure analysis flags are deliberately left alone even when they only do anything on one
      * family — [ppgHrSubLagInterp] only affects v26 optical records, which a 4.0 never sends, so it is
-     * inert rather than misapplied. [experimentalSleepV2], [hrvReadiness] and [motionAwareWake] are
+     * inert rather than misapplied. [experimentalSleepV2], [hrvReadiness], [motionAwareWake] and [hrSleepOnset] are
      * model-agnostic (the last self-gates on observed sample density, never on family, per #345).
      */
     fun resetFiveMGGatedProbes() {
@@ -350,6 +360,9 @@ class PuffinExperiment(
 
         /** "Motion-aware wake refinement" opt-in (mirrors macOS `PuffinExperiment.motionAwareWakeKey`). */
         const val KEY_MOTION_AWARE_WAKE = "noopMotionAwareWake"
+
+        /** "Heart-rate sleep onset" opt-in (mirrors macOS `PuffinExperiment.hrSleepOnsetKey`). */
+        const val KEY_HR_SLEEP_ONSET = "noopHrSleepOnset"
 
         fun from(context: Context): PuffinExperiment =
             PuffinExperiment(

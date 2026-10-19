@@ -678,6 +678,9 @@ fun SettingsScreen(
     // "Motion-aware wake refinement" (#364 follow-up) — OFF by default. Self-gates on observed gravity +
     // step density, so it is a no-op on a sparse (e.g. WHOOP 4.0) night regardless of this switch.
     var motionAwareWake by remember { mutableStateOf(puffinExperiment.motionAwareWake) }
+    // "Heart-rate sleep onset" — OFF by default. Relabels the still-but-awake head of a detected night as
+    // wake up to the first sustained drop of HR to the night's median.
+    var hrSleepOnset by remember { mutableStateOf(puffinExperiment.hrSleepOnset) }
 
     // Whether to surface the WHOOP 5/MG-only probes (puffin / R22 / broadcast-HR / frame-capture). Gated
     // so a confident 4.0 owner never sees 5/MG controls that can't touch their strap (#22). The model
@@ -3167,6 +3170,42 @@ fun SettingsScreen(
                 }
                 Text(
                     uiString(R.string.l10n_settings_screen_reviews_each_scored_wake_block_for_537924ea),
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- Heart-rate sleep onset — OFF by default. ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        uiString(R.string.l10n_settings_screen_hr_sleep_onset_title),
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = hrSleepOnset,
+                        onCheckedChange = {
+                            hrSleepOnset = it
+                            puffinExperiment.hrSleepOnset = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = uiString(R.string.l10n_settings_screen_hr_sleep_onset_title)
+                        },
+                    )
+                }
+                Text(
+                    uiString(R.string.l10n_settings_screen_hr_sleep_onset_caption),
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )

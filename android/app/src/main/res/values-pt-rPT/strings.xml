@@ -2852,4 +2852,6 @@
     <string name="raw_diag_ecg_probe_running">Pode ainda estar a decorrer uma captura nesta pulseira. O veredicto vai para o strap log.</string>
     <string name="today_customize_live_session_availability">Aparece hoje quando as sessões em direto estão ativadas nas Definições ou existe uma sessão ativa.</string>
     <string name="l10n_app_changelog_today_your_way_heart_rate_any_5e1308b3">Hoje à sua maneira, frequência cardíaca para qualquer aplicação e italiano</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_title">Adormecer pela frequência cardíaca</string>
+    <string name="l10n_settings_screen_hr_sleep_onset_caption">Estar quieto mas acordado na cama pode parecer sono. Com isto ativo, o início de cada noite conta como acordado até a tua frequência cardíaca descer ao nível de sono, e a hora a que adormeceste passa para esse momento. As noites corrigidas à mão não são alteradas. Desativado por predefinição; aplica-se às próximas noites analisadas.</string>
 </resources>

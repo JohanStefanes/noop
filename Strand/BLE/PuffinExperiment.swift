@@ -295,6 +295,16 @@ enum PuffinExperiment {
 
     static var motionAwareWakeEnabled: Bool { UserDefaults.standard.bool(forKey: motionAwareWakeKey) }
 
+    /// Opt-in "Heart-rate sleep onset" (default OFF): a post-pass (`HRSleepOnsetRefinement`) that relabels
+    /// the head of each detected session as wake up to the first sustained drop of HR to the night's own
+    /// median, so lying still but awake in bed stops counting as sleep and "Fell asleep" moves to when HR
+    /// actually fell. Only ever adds wake at the start of a session; hand-edited nights are never touched.
+    /// Read in `IntelligenceEngine`, threaded through `AnalyticsEngine.analyzeDay`. Mirrors the Android
+    /// `PuffinExperiment.KEY_HR_SLEEP_ONSET`.
+    static let hrSleepOnsetKey = "noopHrSleepOnset"
+
+    static var hrSleepOnsetEnabled: Bool { UserDefaults.standard.bool(forKey: hrSleepOnsetKey) }
+
     /// Opt-in "WHOOP MG ECG (experimental)": unlock the gated, user-initiated ECG ("Labrador") probe that
     /// asks an MG strap to start its ECG subsystem. Default OFF, and OFF is not merely the default — with
     /// this key false the four ECG opcodes are dropped by the BLEManager allowlist, so no ECG byte can
