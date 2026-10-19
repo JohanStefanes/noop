@@ -2,37 +2,6 @@
 import Foundation
 import WhoopStore
 
-/// One day's calorie figure and where it came from. The precedence is the #616 rule the Liquid Today tile
-/// uses (`LiquidTodayView.caloriesCount`): the day's imported Apple Health active energy first, else NOOP's
-/// on-device heart-rate estimate (`DailyMetric.activeKcalEst`). The two are different quantities (active
-/// only vs. resting plus active), so the source travels with the number and the screens name it.
-enum JohanCalories {
-    enum Source: Equatable {
-        case appleHealth
-        case heartRate
-    }
-
-    struct Reading: Equatable {
-        let kcal: Double
-        let source: Source
-    }
-
-    /// Imported active energy by day: the largest value across that day's Apple Health rows, as Liquid Today reads it.
-    static func importedByDay(_ rows: [AppleDaily]) -> [String: Double] {
-        var out: [String: Double] = [:]
-        for r in rows {
-            if let k = r.activeKcal { out[r.day] = max(out[r.day] ?? 0, k) }
-        }
-        return out
-    }
-
-    static func reading(imported: Double?, onDevice: Double?) -> Reading? {
-        if let imported { return Reading(kcal: imported, source: .appleHealth) }
-        if let onDevice { return Reading(kcal: onDevice, source: .heartRate) }
-        return nil
-    }
-}
-
 /// Read model behind "Kalorien": the recent calorie history and the latest workouts that burned some.
 /// Today's value is NOT read here; the screen takes it from `JohanHomeModel` and splices it into the history,
 /// so the Home card, the headline and today's bar can never show two different numbers.
@@ -88,9 +57,9 @@ final class JohanCaloriesModel: ObservableObject {
         return values.reduce(0, +) / Double(values.count)
     }
 
-    /// True when the chart holds days from both sources, which measure different things.
+    /// True when the chart holds active-only days beside whole-day ones, which measure different things.
     static func mixesSources(_ days: [Day]) -> Bool {
-        Set(days.compactMap { $0.reading.map { $0.source == .appleHealth } }).count > 1
+        Set(days.compactMap { $0.reading.map { $0.source == .appleHealthActive } }).count > 1
     }
 }
 #endif

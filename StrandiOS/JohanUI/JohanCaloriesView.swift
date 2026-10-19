@@ -43,11 +43,12 @@ struct JohanCaloriesView: View {
         Int(kcal.rounded()).formatted(.number.locale(AppLanguage.activeLocale))
     }
 
-    /// Which figure the number is, in one sentence. Apple Health counts active energy only; NOOP's own
-    /// estimate is the whole day, resting energy included.
+    /// Which figure the number is, in one sentence. Both whole-day sources include resting energy; an
+    /// Apple Health day without resting energy is named as active only.
     static func sourceText(_ source: JohanCalories.Source) -> String {
         switch source {
-        case .appleHealth: String(localized: "Active energy from Apple Health")
+        case .appleHealth: String(localized: "Resting and active energy from Apple Health")
+        case .appleHealthActive: String(localized: "Active energy from Apple Health")
         case .heartRate: String(localized: "Estimated from heart rate, resting and active energy")
         }
     }
@@ -113,7 +114,7 @@ struct JohanCaloriesView: View {
                                   formatAxis: { Self.kcalText($0) })
                         .frame(height: 120)
                     if JohanCaloriesModel.mixesSources(days) {
-                        Text("Days from Apple Health count active energy only; the other days are heart-rate estimates that include resting energy.")
+                        Text("Some days from Apple Health count active energy only; the other days include resting energy.")
                             .font(.system(.caption)).foregroundStyle(JohanTheme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

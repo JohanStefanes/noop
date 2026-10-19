@@ -86,8 +86,8 @@ final class JohanHomeModel: ObservableObject {
     @Published private(set) var healthspan = Healthspan()
     /// SpO₂ candidate by day ("spo2_candidate" series), the fallback behind `Snapshot.spo2`.
     private var spo2CandidateByDay: [String: Double] = [:]
-    /// Imported Apple Health active energy by day, the first choice behind `Snapshot.calories`.
-    private var importedKcalByDay: [String: Double] = [:]
+    /// Imported Apple Health energy by day, the first choice behind `Snapshot.calories`.
+    private var importedKcalByDay: [String: JohanCalories.Imported] = [:]
 
     let calibrationLength = Baselines.minNightsSeed
 

@@ -186,6 +186,8 @@ targets:
       - StrandiOS/JohanUI/JohanNightCoverage.swift
       # And the bedtime live-link reminder's fire-date planner, the pure half again.
       - StrandiOS/JohanUI/JohanLiveLinkPlan.swift
+      # And the calorie precedence (Apple Health whole day, active only, or NOOP's estimate).
+      - StrandiOS/JohanUI/JohanCalories.swift
     # Same wrapper as the app target, so the OURA_CLOUD_IMPORT-gated Oura tests compile exactly
     # when the app's Oura lane does (flag + creds both come from the untracked OuraSecrets.xcconfig).
     configFiles:
