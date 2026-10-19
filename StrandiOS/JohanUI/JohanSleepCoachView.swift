@@ -13,6 +13,7 @@ struct JohanSleepCoachView: View {
     @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var live: LiveState
+    @EnvironmentObject private var intelligence: IntelligenceEngine
     @StateObject private var coach = JohanSleepCoachModel()
     @AppStorage(PuffinExperiment.keepRealtimeForDataKey) private var continuousHrv = false
     @State private var showsPhases = false
@@ -21,6 +22,8 @@ struct JohanSleepCoachView: View {
     /// The stage tapped in the stage rows: brought forward in the stage chart and the heart-rate chart.
     @State private var highlightedStage: SleepStage?
     @State private var showsNightDetails = false
+    /// The stored main block whose bed and wake times the editor sheet corrects; nil while it is closed.
+    @State private var timeEdit: JohanSleepTimeEdit?
     @AppStorage(JohanSleepGoal.storageKey) private var goalRaw = JohanSleepGoal.peak.rawValue
 
     var body: some View {
@@ -45,6 +48,23 @@ struct JohanSleepCoachView: View {
         .task(id: reloadTick) { await coach.load(repo: repo, circadian: model.circadianPhase) }
         .onReceive(repo.$days.dropFirst()) { _ in
             Task { await coach.load(repo: repo, circadian: model.circadianPhase) }
+        }
+        .sheet(item: $timeEdit) { edit in
+            // Same editor and save path as the standard Sleep tab: the edit writes against the immutable
+            // detected key, then the days are re-scored so recovery and the rest honour the new window.
+            let coverageLo = min(edit.detectedStartTs, edit.bedTs)
+            SleepTimeEditor(bedTs: edit.bedTs, wakeTs: edit.wakeTs,
+                            coverage: coverageLo...max(edit.wakeTs, coverageLo + 1),
+                            suppressesReDetection: !edit.userEdited,
+                            onSave: { newBedTs, newWakeTs in
+                await repo.editSleepTimes(detectedStartTs: edit.detectedStartTs, oldEndTs: edit.wakeTs,
+                                          storedStagesJSON: edit.stagesJSON,
+                                          newStartTs: newBedTs, newEndTs: newWakeTs)
+                await intelligence.analyzeRecent()
+                await repo.refresh()
+                await coach.load(repo: repo, circadian: model.circadianPhase)
+            })
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -197,10 +217,11 @@ struct JohanSleepCoachView: View {
 
     private func summaryCard(_ sleep: SleepModel) -> some View {
         let night = sleep.night
-        return Button {
-            withAnimation(.snappy) { showsNightDetails.toggle() }
-        } label: {
-            JohanCard {
+        return JohanCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Button {
+                    withAnimation(.snappy) { showsNightDetails.toggle() }
+                } label: {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -227,10 +248,33 @@ struct JohanSleepCoachView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(JohanTheme.textPrimary)
+                .contentShape(Rectangle())
+                }
+                .buttonStyle(JohanPressStyle())
+                .accessibilityHint(Text(showsNightDetails ? "Hides the details." : "Shows time in bed and how often you woke up."))
+                editTimesButton(night)
             }
         }
-        .buttonStyle(JohanPressStyle())
-        .accessibilityHint(Text(showsNightDetails ? "Hides the details." : "Shows time in bed and how often you woke up."))
+    }
+
+    /// Opens the bed / wake editor for the night's main stored block. Detection reads lying still awake
+    /// as light sleep, so the times it finds can start too early; this is where the wearer corrects them.
+    /// Hidden when the night has no stored block to write against (a synthetic stub).
+    @ViewBuilder
+    private func editTimesButton(_ night: Night) -> some View {
+        if let target = night.editTarget {
+            Button {
+                timeEdit = JohanSleepTimeEdit(detectedStartTs: target.startTs, bedTs: target.effectiveStartTs,
+                                              wakeTs: target.endTs, stagesJSON: target.stagesJSON,
+                                              userEdited: target.userEdited)
+            } label: {
+                Label("Edit sleep times",
+                      systemImage: target.userEdited ? "pencil.circle.fill" : "pencil.circle")
+                    .font(.system(.subheadline, weight: .semibold))
+                    .foregroundStyle(JohanTheme.sleepViolet)
+            }
+            .buttonStyle(JohanPressStyle())
+        }
     }
 
     /// Awake phases between the first and the last stretch of sleep: waking up during the night, not the
@@ -729,4 +773,16 @@ struct JohanSleepCoachView: View {
         d.formatted(.dateTime.hour().minute().locale(AppLanguage.activeLocale))
     }
 }
+
+/// The night handed to the sleep-time editor: the immutable detected key the edit writes against, the
+/// current bed and wake (seeding the pickers), and the stored stages the edit reclips.
+private struct JohanSleepTimeEdit: Identifiable {
+    let detectedStartTs: Int
+    let bedTs: Int
+    let wakeTs: Int
+    let stagesJSON: String?
+    let userEdited: Bool
+    var id: Int { detectedStartTs }
+}
+
 #endif
