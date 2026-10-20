@@ -106,6 +106,113 @@ class HrSleepOnsetRefinementTest {
         assertEquals((nightMinutes - 105).toDouble() / nightMinutes, out.efficiency, 1e-9)
     }
 
+    private fun band(awakeMinutes: Int, keepEvery: Int = 1): List<Pair<Long, Int>> {
+        val out = ArrayList<Pair<Long, Int>>()
+        for (minute in 0 until nightMinutes) {
+            if (minute % keepEvery != 0) continue
+            val state = if (minute < awakeMinutes) 1 else if ((minute - awakeMinutes) % 90 >= 70) 3 else 2
+            for (k in 0 until 6) out.add(start + minute * 60L + k * 10L to state)
+        }
+        return out
+    }
+
+    @Test
+    fun bandOnsetBeatsDriftingHeartRate() {
+        val drifting = (0 until nightMinutes).flatMap { minute ->
+            (0 until 6).map { HrSample("d", start + minute * 60L + it * 10L, 90 - minute * 30 / nightMinutes) }
+        }
+        assertEquals(start + 205 * 60L, HrSleepOnsetRefinement.onsetTs(start, start + nightMinutes * 60L, drifting))
+        for (lead in listOf(20, 45, 90)) {
+            val out = HrSleepOnsetRefinement.refine(wholeNightLight(), drifting, band(lead))
+            assertEquals("lead-in $lead min", StageSegment(start, start + lead * 60L, "wake"), out.first())
+        }
+    }
+
+    @Test
+    fun coveredBandThatDeclinesDoesNotFallBackToHeartRate() {
+        val segs = wholeNightLight()
+        assertEquals(segs, HrSleepOnsetRefinement.refine(segs, night(60), band(0)))
+    }
+
+    @Test
+    fun sparseBandFallsBackToHeartRate() {
+        val out = HrSleepOnsetRefinement.refine(wholeNightLight(), night(60), band(30, keepEvery = 2))
+        assertEquals(StageSegment(start, start + 60 * 60L, "wake"), out.first())
+    }
+
+    /** Swift oracle output for the band path (`HRSleepOnsetRefinementTests.bandOracleOnsets`), verbatim. */
+    private val expectedBandOracle = listOf(
+        "lead=0 flip=0 keep=1 onset=nil",
+        "lead=0 flip=0 keep=3 onset=nocover",
+        "lead=0 flip=10 keep=1 onset=nil",
+        "lead=0 flip=10 keep=3 onset=nocover",
+        "lead=0 flip=30 keep=1 onset=nil",
+        "lead=0 flip=30 keep=3 onset=nocover",
+        "lead=8 flip=0 keep=1 onset=nil",
+        "lead=8 flip=0 keep=3 onset=nocover",
+        "lead=8 flip=10 keep=1 onset=nil",
+        "lead=8 flip=10 keep=3 onset=nocover",
+        "lead=8 flip=30 keep=1 onset=nil",
+        "lead=8 flip=30 keep=3 onset=nocover",
+        "lead=25 flip=0 keep=1 onset=1500",
+        "lead=25 flip=0 keep=3 onset=nocover",
+        "lead=25 flip=10 keep=1 onset=1500",
+        "lead=25 flip=10 keep=3 onset=nocover",
+        "lead=25 flip=30 keep=1 onset=1500",
+        "lead=25 flip=30 keep=3 onset=nocover",
+        "lead=47 flip=0 keep=1 onset=2820",
+        "lead=47 flip=0 keep=3 onset=nocover",
+        "lead=47 flip=10 keep=1 onset=2820",
+        "lead=47 flip=10 keep=3 onset=nocover",
+        "lead=47 flip=30 keep=1 onset=2880",
+        "lead=47 flip=30 keep=3 onset=nocover",
+        "lead=90 flip=0 keep=1 onset=5400",
+        "lead=90 flip=0 keep=3 onset=nocover",
+        "lead=90 flip=10 keep=1 onset=5400",
+        "lead=90 flip=10 keep=3 onset=nocover",
+        "lead=90 flip=30 keep=1 onset=5280",
+        "lead=90 flip=30 keep=3 onset=nocover",
+        "lead=150 flip=0 keep=1 onset=9000",
+        "lead=150 flip=0 keep=3 onset=nocover",
+        "lead=150 flip=10 keep=1 onset=9000",
+        "lead=150 flip=10 keep=3 onset=nocover",
+        "lead=150 flip=30 keep=1 onset=8880",
+        "lead=150 flip=30 keep=3 onset=nocover",
+        "lead=230 flip=0 keep=1 onset=nil",
+        "lead=230 flip=0 keep=3 onset=nocover",
+        "lead=230 flip=10 keep=1 onset=nil",
+        "lead=230 flip=10 keep=3 onset=nocover",
+        "lead=230 flip=30 keep=1 onset=nil",
+        "lead=230 flip=30 keep=3 onset=nocover",
+    )
+
+    @Test
+    fun bandOracleMatchesSwift() {
+        val base = 1_700_000_000L / 60 * 60
+        val lines = ArrayList<String>()
+        for (lead in listOf(0, 8, 25, 47, 90, 150, 230)) {
+            for (flip in listOf(0, 10, 30)) {
+                for (keepEvery in listOf(1, 3)) {
+                    var seed = (lead * 31 + flip * 7 + keepEvery).toLong()
+                    val band = ArrayList<Pair<Long, Int>>()
+                    for (minute in 0 until 420) {
+                        if (minute % keepEvery != 0) continue
+                        for (k in 0 until 6) {
+                            seed = (seed * 1_664_525L + 1_013_904_223L) and 0xFFFFFFFFL
+                            var state = if (minute < lead) 1 else if ((minute - lead) % 90 >= 70) 3 else 2
+                            if ((seed ushr 16) % 100 < flip) state = if (state >= 2) 0 else 2
+                            band.add(base + minute * 60L + k * 10L to state)
+                        }
+                    }
+                    val onset = HrSleepOnsetRefinement.bandOnsetTs(base, base + 420 * 60L, band)
+                    val text = onset?.let { b -> b.onset?.let { (it - base).toString() } ?: "nil" } ?: "nocover"
+                    lines.add("lead=$lead flip=$flip keep=$keepEvery onset=$text")
+                }
+            }
+        }
+        assertEquals(expectedBandOracle, lines)
+    }
+
     /** Swift oracle output (standalone `swiftc` build of HRSleepOnsetRefinement.swift), pasted verbatim. */
     private val expectedOracle = listOf(
         "lead=0 noise=0 onset=nil",

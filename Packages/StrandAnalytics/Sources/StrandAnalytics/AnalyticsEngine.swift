@@ -533,7 +533,7 @@ public enum AnalyticsEngine {
         // Heart-rate onset refinement: the still-but-awake head of a session becomes wake. Detected
         // sessions only; provided (ring) hypnograms below bypass it like they bypass wake refinement.
         let refinedSessions = useHRSleepOnset
-            ? motionRefinedSessions.map { HRSleepOnsetRefinement.refine($0, hr: hr) }
+            ? motionRefinedSessions.map { HRSleepOnsetRefinement.refine($0, hr: hr, bandSleepState: bandSleepState) }
             : motionRefinedSessions
         // #804 Fix A: fold in the caller's device-provided hypnogram (see `providedSleep`). Empty = the
         // byte-identical motion-only path. Otherwise enrich each provided session's nightly restingHR/avgHRV

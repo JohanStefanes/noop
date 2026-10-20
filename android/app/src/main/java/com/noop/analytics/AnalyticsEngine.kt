@@ -463,7 +463,7 @@ object AnalyticsEngine {
         // Heart-rate onset refinement: the still-but-awake head of a session becomes wake. Detected
         // sessions only; provided (ring) hypnograms below bypass it like they bypass wake refinement.
         val refinedSessions = if (useHrSleepOnset) {
-            motionRefinedSessions.map { HrSleepOnsetRefinement.refine(it, hr) }
+            motionRefinedSessions.map { HrSleepOnsetRefinement.refine(it, hr, bandSleepState) }
         } else {
             motionRefinedSessions
         }

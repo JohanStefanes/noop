@@ -23,6 +23,15 @@ import WhoopProtocol
 // lies beyond `maxLeadFraction` of the session (a late dip is more likely a quiet REM-free stretch late in a
 // night than the onset).
 //
+// THE STRAP'S OWN VERDICT FIRST. Heart rate fails after a late hard workout: HR then drifts down all night,
+// the night's median sits far below the first hours of real sleep, and the HR onset lands hours late (a
+// reported night: run until 21:00, HR onset 01:52, real onset about 00:00). When the strap banked its own
+// sleep_state band (0 wake / 1 still / 2 asleep / 3, which on banded nights only appears around sleep and
+// never in waking hours), `bandOnsetTs` is used instead: the first `sustainMinutes` stretch in which at
+// least `minSustainMinutesWithHR` minutes read 2 or 3, starting at its first such minute. "Still" (1) is exactly the lying-awake lead-in this
+// pass exists for, so it never counts as asleep. HR is the fallback only when the band covers too little of
+// the session; a covered night whose band declines is NOT handed to HR.
+//
 // SAFETY POSTURE. Default-off Experimental toggle (`PuffinExperiment.hrSleepOnsetEnabled`), per AGENTS.md's
 // rule for a derived physiological signal: one reported night is not validation. Applied only on the
 // detection path (`AnalyticsEngine.analyzeDay`), never to a hand-edited window, whose onset the wearer set.
@@ -87,11 +96,43 @@ public enum HRSleepOnsetRefinement {
         return nil
     }
 
-    /// Relabel every stage before the heart-rate onset as wake. `segments` must tile one contiguous window
+    /// The strap-band onset inside `[start, end)`. Outer nil: the band covers less than
+    /// `minHRCoverageFraction` of the session's minutes, so it cannot decide. Inner nil: it covers the night
+    /// and the guards decline. A minute reads asleep when at least half its samples are state 2 or 3.
+    public static func bandOnsetTs(start: Int, end: Int, band: [(ts: Int, state: Int)]) -> Int?? {
+        guard end > start else { return nil }
+        let firstMinute = start / 60
+        let minuteCount = (end - 1) / 60 - firstMinute + 1
+        guard minuteCount >= sustainMinutes else { return nil }
+        var asleepCounts = [Int](repeating: 0, count: minuteCount)
+        var counts = [Int](repeating: 0, count: minuteCount)
+        for s in band where s.ts >= start && s.ts < end {
+            let i = s.ts / 60 - firstMinute
+            counts[i] += 1
+            if s.state >= 2 { asleepCounts[i] += 1 }
+        }
+        let covered = counts.filter { $0 > 0 }.count
+        guard Double(covered) >= minHRCoverageFraction * Double(minuteCount) else { return nil }
+        let asleep = (0..<minuteCount).map { counts[$0] > 0 && 2 * asleepCounts[$0] >= counts[$0] }
+        for i in 0...(minuteCount - sustainMinutes) {
+            guard asleep[i..<(i + sustainMinutes)].filter({ $0 }).count >= minSustainMinutesWithHR else { continue }
+            // The window may open on up to two awake minutes; onset is its first asleep minute.
+            let first = (i..<(i + sustainMinutes)).first { asleep[$0] } ?? i
+            let onset = max(start, (firstMinute + first) * 60)
+            guard onset - start >= minShiftSeconds else { return .some(nil) }
+            guard Double(onset - start) <= maxLeadFraction * Double(end - start) else { return .some(nil) }
+            return onset
+        }
+        return .some(nil)
+    }
+
+    /// Relabel every stage before the onset as wake: the band onset when the strap banked one, else HR. `segments` must tile one contiguous window
     /// in order (as every `stageSession` returns). Byte-identical passthrough when the guards decline.
-    public static func refine(_ segments: [StageSegment], hr: [HRSample]) -> [StageSegment] {
+    public static func refine(_ segments: [StageSegment], hr: [HRSample],
+                              bandSleepState: [(ts: Int, state: Int)] = []) -> [StageSegment] {
         guard let windowStart = segments.first?.start, let windowEnd = segments.last?.end,
-              let onset = onsetTs(start: windowStart, end: windowEnd, hr: hr) else { return segments }
+              let onset = bandOnsetTs(start: windowStart, end: windowEnd, band: bandSleepState)
+                ?? onsetTs(start: windowStart, end: windowEnd, hr: hr) else { return segments }
         var out: [StageSegment] = []
         out.reserveCapacity(segments.count + 1)
         for seg in segments {
@@ -109,8 +150,9 @@ public enum HRSleepOnsetRefinement {
 
     /// Session-level convenience: refines `session.stages` and recomputes `efficiency` from the result.
     /// Bounds, `restingHR`, `avgHRV` and `hrOnly` are carried over unchanged.
-    public static func refine(_ session: SleepSession, hr: [HRSample]) -> SleepSession {
-        let newStages = refine(session.stages, hr: hr)
+    public static func refine(_ session: SleepSession, hr: [HRSample],
+                              bandSleepState: [(ts: Int, state: Int)] = []) -> SleepSession {
+        let newStages = refine(session.stages, hr: hr, bandSleepState: bandSleepState)
         guard newStages != session.stages else { return session }
         let newEfficiency = SleepStager.efficiency(start: session.start, end: session.end, stages: newStages)
         return SleepSession(start: session.start, end: session.end, efficiency: newEfficiency,

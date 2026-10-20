@@ -15,6 +15,11 @@ import com.noop.data.HrSample
  * relabels everything before it as wake. It only ever adds wake at the head of a session; bounds and every
  * stage after the onset are untouched.
  *
+ * When the strap banked its own sleep_state band, [bandOnsetTs] is used instead of HR: HR drifts down all
+ * night after a late hard workout and puts the onset hours late, while the band's "asleep" (2 or 3) does
+ * not drift and its "still" (1) is exactly the lying-awake lead-in. HR is the fallback only when the band
+ * covers too little of the session.
+ *
  * Passthrough when HR covers less than [MIN_HR_COVERAGE_FRACTION] of the session's minutes, when no
  * stretch qualifies, when the onset is under [MIN_SHIFT_SECONDS] after the start, or beyond
  * [MAX_LEAD_FRACTION] of the session. Default-off Experimental toggle
@@ -83,11 +88,52 @@ object HrSleepOnsetRefinement {
         return null
     }
 
-    /** Relabel every stage before the heart-rate onset as wake. Passthrough when the guards decline. */
-    fun refine(segments: List<StageSegment>, hr: List<HrSample>): List<StageSegment> {
+    /** Result of [bandOnsetTs] when the band covers the session: [onset] is null when the guards decline. */
+    data class BandOnset(val onset: Long?)
+
+    /**
+     * The strap-band onset inside `[start, end)`. Null: the band covers less than [MIN_HR_COVERAGE_FRACTION]
+     * of the session's minutes and cannot decide. A minute reads asleep when at least half its samples are
+     * state 2 or 3; onset is the first asleep minute of the first [SUSTAIN_MINUTES] stretch holding at least
+     * [MIN_SUSTAIN_MINUTES_WITH_HR] asleep minutes.
+     */
+    fun bandOnsetTs(start: Long, end: Long, band: List<Pair<Long, Int>>): BandOnset? {
+        if (end <= start) return null
+        val firstMinute = start / 60
+        val minuteCount = ((end - 1) / 60 - firstMinute + 1).toInt()
+        if (minuteCount < SUSTAIN_MINUTES) return null
+        val asleepCounts = IntArray(minuteCount)
+        val counts = IntArray(minuteCount)
+        for ((ts, state) in band) {
+            if (ts < start || ts >= end) continue
+            val i = (ts / 60 - firstMinute).toInt()
+            counts[i] += 1
+            if (state >= 2) asleepCounts[i] += 1
+        }
+        if (counts.count { it > 0 }.toDouble() < MIN_HR_COVERAGE_FRACTION * minuteCount.toDouble()) return null
+        val asleep = BooleanArray(minuteCount) { counts[it] > 0 && 2 * asleepCounts[it] >= counts[it] }
+        for (i in 0..(minuteCount - SUSTAIN_MINUTES)) {
+            if ((i until i + SUSTAIN_MINUTES).count { asleep[it] } < MIN_SUSTAIN_MINUTES_WITH_HR) continue
+            // The window may open on up to two awake minutes; onset is its first asleep minute.
+            val first = (i until i + SUSTAIN_MINUTES).firstOrNull { asleep[it] } ?: i
+            val onset = maxOf(start, (firstMinute + first) * 60)
+            if (onset - start < MIN_SHIFT_SECONDS) return BandOnset(null)
+            if ((onset - start).toDouble() > MAX_LEAD_FRACTION * (end - start).toDouble()) return BandOnset(null)
+            return BandOnset(onset)
+        }
+        return BandOnset(null)
+    }
+
+    /** Relabel every stage before the onset as wake: the band onset when the strap banked one, else HR. */
+    fun refine(
+        segments: List<StageSegment>,
+        hr: List<HrSample>,
+        bandSleepState: List<Pair<Long, Int>> = emptyList(),
+    ): List<StageSegment> {
         val windowStart = segments.firstOrNull()?.start ?: return segments
         val windowEnd = segments.last().end
-        val onset = onsetTs(windowStart, windowEnd, hr) ?: return segments
+        val band = bandOnsetTs(windowStart, windowEnd, bandSleepState)
+        val onset = (if (band != null) band.onset else onsetTs(windowStart, windowEnd, hr)) ?: return segments
         val out = ArrayList<StageSegment>(segments.size + 1)
         for (seg in segments) {
             when {
@@ -103,8 +149,12 @@ object HrSleepOnsetRefinement {
     }
 
     /** Session-level convenience: refines `session.stages` and recomputes `efficiency` from the result. */
-    fun refine(session: DetectedSleep, hr: List<HrSample>): DetectedSleep {
-        val newStages = refine(session.stages, hr)
+    fun refine(
+        session: DetectedSleep,
+        hr: List<HrSample>,
+        bandSleepState: List<Pair<Long, Int>> = emptyList(),
+    ): DetectedSleep {
+        val newStages = refine(session.stages, hr, bandSleepState)
         if (newStages == session.stages) return session
         val newEfficiency = SleepStager.efficiency(session.start, session.end, newStages)
         return session.copy(efficiency = newEfficiency, stages = newStages)

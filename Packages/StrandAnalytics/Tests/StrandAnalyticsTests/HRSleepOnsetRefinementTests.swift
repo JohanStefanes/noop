@@ -99,6 +99,123 @@ final class HRSleepOnsetRefinementTests: XCTestCase {
         XCTAssertEqual(out.efficiency, Double(nightMinutes - 105) / Double(nightMinutes), accuracy: 1e-9)
     }
 
+    /// Strap band for a night: "still" (1) through the lead-in, then asleep (2) with a stretch of 3 every
+    /// 90 minutes. One sample every 10 s, every `keepEvery`-th minute.
+    private func band(awakeMinutes: Int, keepEvery: Int = 1) -> [(ts: Int, state: Int)] {
+        var out: [(ts: Int, state: Int)] = []
+        for minute in 0..<nightMinutes where minute % keepEvery == 0 {
+            let state = minute < awakeMinutes ? 1 : ((minute - awakeMinutes) % 90 >= 70 ? 3 : 2)
+            for k in 0..<6 { out.append((ts: start + minute * 60 + k * 10, state: state)) }
+        }
+        return out
+    }
+
+    /// HR falling steadily from 90 to 60 bpm all night, as after a late hard workout: the median lands
+    /// mid-night, so HR alone puts the onset hours late. The band still recovers each injected onset.
+    func testBandOnsetBeatsDriftingHeartRate() {
+        let drifting = (0..<nightMinutes).flatMap { minute in
+            (0..<6).map { HRSample(ts: start + minute * 60 + $0 * 10, bpm: 90 - minute * 30 / nightMinutes) }
+        }
+        XCTAssertEqual(HRSleepOnsetRefinement.onsetTs(start: start, end: start + nightMinutes * 60, hr: drifting),
+                       start + 205 * 60)
+        for lead in [20, 45, 90] {
+            let out = HRSleepOnsetRefinement.refine(wholeNightLight(), hr: drifting,
+                                                    bandSleepState: band(awakeMinutes: lead))
+            XCTAssertEqual(out.first, StageSegment(start: start, end: start + lead * 60, stage: "wake"),
+                           "lead-in \(lead) min")
+        }
+    }
+
+    /// A band that covers the night and says asleep from the start is a verdict, not a gap: no HR fallback.
+    func testCoveredBandThatDeclinesDoesNotFallBackToHeartRate() {
+        let segs = wholeNightLight()
+        XCTAssertEqual(HRSleepOnsetRefinement.refine(segs, hr: night(awakeMinutes: 60),
+                                                     bandSleepState: band(awakeMinutes: 0)), segs)
+    }
+
+    func testSparseBandFallsBackToHeartRate() {
+        let out = HRSleepOnsetRefinement.refine(wholeNightLight(), hr: night(awakeMinutes: 60),
+                                                bandSleepState: band(awakeMinutes: 30, keepEvery: 2))
+        XCTAssertEqual(out.first, StageSegment(start: start, end: start + 60 * 60, stage: "wake"))
+    }
+
+    /// Cross-platform oracle for the band path; same contract as `testOracleMatchesKotlinLiterals`.
+    func testBandOracleMatchesKotlinLiterals() {
+        XCTAssertEqual(Self.bandOracleOnsets(), Self.expectedBandOracle)
+    }
+
+    static let expectedBandOracle = """
+        lead=0 flip=0 keep=1 onset=nil
+        lead=0 flip=0 keep=3 onset=nocover
+        lead=0 flip=10 keep=1 onset=nil
+        lead=0 flip=10 keep=3 onset=nocover
+        lead=0 flip=30 keep=1 onset=nil
+        lead=0 flip=30 keep=3 onset=nocover
+        lead=8 flip=0 keep=1 onset=nil
+        lead=8 flip=0 keep=3 onset=nocover
+        lead=8 flip=10 keep=1 onset=nil
+        lead=8 flip=10 keep=3 onset=nocover
+        lead=8 flip=30 keep=1 onset=nil
+        lead=8 flip=30 keep=3 onset=nocover
+        lead=25 flip=0 keep=1 onset=1500
+        lead=25 flip=0 keep=3 onset=nocover
+        lead=25 flip=10 keep=1 onset=1500
+        lead=25 flip=10 keep=3 onset=nocover
+        lead=25 flip=30 keep=1 onset=1500
+        lead=25 flip=30 keep=3 onset=nocover
+        lead=47 flip=0 keep=1 onset=2820
+        lead=47 flip=0 keep=3 onset=nocover
+        lead=47 flip=10 keep=1 onset=2820
+        lead=47 flip=10 keep=3 onset=nocover
+        lead=47 flip=30 keep=1 onset=2880
+        lead=47 flip=30 keep=3 onset=nocover
+        lead=90 flip=0 keep=1 onset=5400
+        lead=90 flip=0 keep=3 onset=nocover
+        lead=90 flip=10 keep=1 onset=5400
+        lead=90 flip=10 keep=3 onset=nocover
+        lead=90 flip=30 keep=1 onset=5280
+        lead=90 flip=30 keep=3 onset=nocover
+        lead=150 flip=0 keep=1 onset=9000
+        lead=150 flip=0 keep=3 onset=nocover
+        lead=150 flip=10 keep=1 onset=9000
+        lead=150 flip=10 keep=3 onset=nocover
+        lead=150 flip=30 keep=1 onset=8880
+        lead=150 flip=30 keep=3 onset=nocover
+        lead=230 flip=0 keep=1 onset=nil
+        lead=230 flip=0 keep=3 onset=nocover
+        lead=230 flip=10 keep=1 onset=nil
+        lead=230 flip=10 keep=3 onset=nocover
+        lead=230 flip=30 keep=1 onset=nil
+        lead=230 flip=30 keep=3 onset=nocover
+        """
+
+    /// LCG-jittered bands over a spread of lead-ins and flip rates (percent of samples flipped between
+    /// awake and asleep), plus a sparse variant; `onset=` is seconds after start, `nil`, or `nocover`.
+    static func bandOracleOnsets() -> String {
+        let base = 1_700_000_000 / 60 * 60
+        var lines: [String] = []
+        for lead in [0, 8, 25, 47, 90, 150, 230] {
+            for flip in [0, 10, 30] {
+                for keepEvery in [1, 3] {
+                    var seed: UInt32 = UInt32(lead * 31 + flip * 7 + keepEvery)
+                    var band: [(ts: Int, state: Int)] = []
+                    for minute in 0..<420 where minute % keepEvery == 0 {
+                        for k in 0..<6 {
+                            seed = seed &* 1_664_525 &+ 1_013_904_223
+                            var state = minute < lead ? 1 : ((minute - lead) % 90 >= 70 ? 3 : 2)
+                            if Int(seed >> 16) % 100 < flip { state = state >= 2 ? 0 : 2 }
+                            band.append((ts: base + minute * 60 + k * 10, state: state))
+                        }
+                    }
+                    let onset = HRSleepOnsetRefinement.bandOnsetTs(start: base, end: base + 420 * 60, band: band)
+                    let text = onset.map { $0.map { "\($0 - base)" } ?? "nil" } ?? "nocover"
+                    lines.append("lead=\(lead) flip=\(flip) keep=\(keepEvery) onset=\(text)")
+                }
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// Cross-platform oracle: the same jittered nights the Kotlin test feeds, with the onsets this
     /// algorithm returns. Changing either side must change both.
     func testOracleMatchesKotlinLiterals() {
