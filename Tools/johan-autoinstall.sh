@@ -21,6 +21,8 @@ WT="$BASE/worktree"
 DD="$BASE/DerivedData"
 LOCK="$BASE/lock"
 PENDING="$BASE/pending"
+# The commit whose app is in $DD; a rerun for the same commit installs it without rebuilding.
+BUILT="$BASE/built"
 # The phone may be away or asleep; try again for up to an hour before giving up on this build.
 INSTALL_TRIES=12
 INSTALL_WAIT=300
@@ -42,27 +44,32 @@ trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 build_and_install() {
     local sha="$1" short="${1:0:8}" subject
     subject="$(git -C "$REPO" log -1 --format=%s "$sha")"
-    log "building $short $subject"
-
-    if [ ! -e "$WT/.git" ]; then
-        git -C "$REPO" worktree prune
-        git -C "$REPO" worktree add --detach "$WT" "$sha"
-    else
-        git -C "$WT" checkout --detach --force --quiet "$sha"
-        git -C "$WT" clean -fdxq
-    fi
-    cp "$REPO/Config/BundleIdSecrets.xcconfig" "$WT/Config/"
-
-    (cd "$WT" && xcodegen generate --quiet)
-    if ! xcodebuild -project "$WT/Strand.xcodeproj" -scheme NOOPiOS -configuration Release \
-            -destination 'generic/platform=iOS' -derivedDataPath "$DD" -allowProvisioningUpdates \
-            -quiet build; then
-        log "build FAILED for $short"
-        notify "Build failed" "$short $subject — see ~/Library/Logs/noop-autobuild.log"
-        return 1
-    fi
-
     local app="$DD/Build/Products/Release-iphoneos/NOOP.app" built
+    if [ "$(cat "$BUILT" 2>/dev/null)" = "$sha" ] && [ -d "$app" ]; then
+        log "already built $short $subject; installing"
+    else
+        log "building $short $subject"
+
+        if [ ! -e "$WT/.git" ]; then
+            git -C "$REPO" worktree prune
+            git -C "$REPO" worktree add --detach "$WT" "$sha"
+        else
+            git -C "$WT" checkout --detach --force --quiet "$sha"
+            git -C "$WT" clean -fdxq
+        fi
+        cp "$REPO/Config/BundleIdSecrets.xcconfig" "$WT/Config/"
+
+        (cd "$WT" && xcodegen generate --quiet)
+        if ! xcodebuild -project "$WT/Strand.xcodeproj" -scheme NOOPiOS -configuration Release \
+                -destination 'generic/platform=iOS' -derivedDataPath "$DD" -allowProvisioningUpdates \
+                -quiet build; then
+            log "build FAILED for $short"
+            notify "Build failed" "$short $subject — see ~/Library/Logs/noop-autobuild.log"
+            return 1
+        fi
+        echo "$sha" > "$BUILT"
+    fi
+
     built="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
     if [ "$built" != "$BUNDLE_ID" ]; then
         log "bundle id is $built, expected $BUNDLE_ID; not installing"
@@ -82,7 +89,7 @@ build_and_install() {
         log "iPhone not reachable (try $i/$INSTALL_TRIES)"
         [ "$i" -lt "$INSTALL_TRIES" ] && sleep "$INSTALL_WAIT"
     done
-    notify "Not installed" "iPhone not reachable for an hour. Built $short; push again or run Tools/johan-autoinstall.sh"
+    notify "Not installed" "iPhone not reachable for an hour. Built $short; run Tools/johan-autoinstall.sh to install it"
     return 1
 }
 
