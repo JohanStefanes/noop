@@ -165,6 +165,15 @@ final class RescoreBackgroundPolicyTests: XCTestCase {
                        RescoreBackgroundPolicy.maxBackgroundRestSeconds)
     }
 
+    /// iOS limits CPU, not wall time: parallel work counts every core, a suspension counts nothing.
+    func testWorkIsCountedInCPUSecondsWhenMeasured() {
+        XCTAssertEqual(RescoreBackgroundPolicy.workSeconds(wallSeconds: 10, cpuSeconds: 19), 19)
+        XCTAssertEqual(RescoreBackgroundPolicy.workSeconds(wallSeconds: 600, cpuSeconds: 2), 2)
+        XCTAssertEqual(RescoreBackgroundPolicy.workSeconds(wallSeconds: 10, cpuSeconds: nil), 10)
+        XCTAssertEqual(RescoreBackgroundPolicy.workSeconds(wallSeconds: 10, cpuSeconds: -1), 10)
+        XCTAssertEqual(RescoreBackgroundPolicy.workSeconds(wallSeconds: 10, cpuSeconds: .nan), 10)
+    }
+
     /// An unreadable measurement rests zero rather than stalling the pass on a value that means nothing.
     func testAnUnreadableMeasurementDoesNotRest() {
         XCTAssertEqual(RescoreBackgroundPolicy.restSeconds(afterWorkSeconds: 0, isBackground: true), 0)

@@ -261,17 +261,28 @@ enum RescoreBackgroundScheduler {
             + " backgrounded=\(backgroundedAtEnd)"
     }
 
+    /// Where the work since the last rest started: uptime, and process CPU when the kernel reports it.
+    struct PaceMark {
+        var uptime: UInt64
+        var cpu: Double?
+        static func now() -> PaceMark {
+            PaceMark(uptime: DispatchTime.now().uptimeNanoseconds, cpu: processCPUSeconds())
+        }
+    }
+
     /// Rest between units of re-score work when backgrounded, so the pass stays under iOS's background CPU
     /// limit instead of being killed by it (`RescoreBackgroundPolicy.backgroundRestPerWorkSecond`). `mark` is
-    /// the uptime the work since the last rest started at, in nanoseconds. It is left alone until a quantum of
-    /// work has built up (`backgroundWorkQuantumSeconds`), so short units run back to back, and it is reset
-    /// after a rest or in the foreground.
-    nonisolated static func paceIfBackgrounded(since mark: inout UInt64) async {
-        let workSeconds = Double(DispatchTime.now().uptimeNanoseconds &- mark) / 1_000_000_000
+    /// where the work since the last rest started. It is left alone until a quantum of work has built up
+    /// (`backgroundWorkQuantumSeconds`), so short units run back to back, and it is reset after a rest or in
+    /// the foreground. Work is counted in CPU seconds, which is what iOS limits (see `workSeconds`).
+    nonisolated static func paceIfBackgrounded(since mark: inout PaceMark) async {
+        let wall = Double(DispatchTime.now().uptimeNanoseconds &- mark.uptime) / 1_000_000_000
+        let cpu = mark.cpu.flatMap { start in processCPUSeconds().map { $0 - start } }
+        let workSeconds = RescoreBackgroundPolicy.workSeconds(wallSeconds: wall, cpuSeconds: cpu)
         let background = await MainActor.run { isBackgrounded }
         let rest = RescoreBackgroundPolicy.restSeconds(afterWorkSeconds: workSeconds, isBackground: background)
         if rest > 0 { try? await Task.sleep(nanoseconds: UInt64(rest * 1_000_000_000)) }
-        if rest > 0 || !background { mark = DispatchTime.now().uptimeNanoseconds }
+        if rest > 0 || !background { mark = .now() }
     }
 
     /// Hold an execution assertion for the duration of `work` so a SHORT pass is not suspended halfway.

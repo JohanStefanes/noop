@@ -1205,7 +1205,7 @@ final class IntelligenceEngine: ObservableObject {
                 try? await store.rrIntervals(deviceId: o, from: f, to: t, limit: StreamReadCap.rr,
                                             unlabelledAliasOfWhoop5: activeWhoop5RR && o == Repository.whoopSource)
             }
-            var paceMark = DispatchTime.now().uptimeNanoseconds
+            var paceMark = RescoreBackgroundScheduler.PaceMark.now()
             for offset in 0..<maxDays {
                 if offset > 0 { await RescoreBackgroundScheduler.paceIfBackgrounded(since: &paceMark) }
                 let dayStart = nowLocalMidnight - offset * 86_400
@@ -2224,7 +2224,7 @@ final class IntelligenceEngine: ObservableObject {
             nowLocalMidnight: nowLocalMidnight, now: now, offsetSec: tzOffset,
             maxDays: maxDays, strictCanonicalAlias: strictCanonicalAlias)
         var appliedLegacySnapshots: [String: LegacyScoreSnapshot] = [:]
-        var paceMark = DispatchTime.now().uptimeNanoseconds
+        var paceMark = RescoreBackgroundScheduler.PaceMark.now()
         for night in scoredNights {
             await RescoreBackgroundScheduler.paceIfBackgrounded(since: &paceMark)
             // #299: scope the edits to THIS day before folding. A userEdited row / hand-logged nap belongs

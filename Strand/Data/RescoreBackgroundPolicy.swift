@@ -63,6 +63,15 @@ enum RescoreBackgroundPolicy {
     /// opportunity per ten seconds of work instead of one per night.
     static let backgroundWorkQuantumSeconds: Double = 10
 
+    /// The work a pace decision counts: CPU seconds when measured, else uptime. A pass runs on several
+    /// cores at once (a foreground pass logged cpuShare=189%), so ten wall seconds can be twenty CPU seconds,
+    /// and resting only the wall time held such a pass near 100% CPU, past the 80% iOS kills at. CPU time
+    /// also leaves out a suspension, which uptime counts as work.
+    static func workSeconds(wallSeconds: Double, cpuSeconds: Double?) -> Double {
+        guard let cpu = cpuSeconds, cpu.isFinite, cpu >= 0 else { return wallSeconds }
+        return cpu
+    }
+
     /// Seconds to rest after `workSeconds` of re-score work done since the last rest. Zero until a quantum of
     /// work has accumulated (`backgroundWorkQuantumSeconds`), and always zero in the foreground, where no CPU
     /// limit applies and the user is waiting on the result. A non-finite measurement rests zero.
