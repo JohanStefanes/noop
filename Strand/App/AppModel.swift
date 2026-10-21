@@ -324,11 +324,11 @@ final class AppModel: ObservableObject {
         // Re-arm the next day's firmware alarm the moment the strap reports it fired (if/when the
         // firmware pushes STRAP_DRIVEN_ALARM_EXECUTED). Gated on enabled inside applySmartAlarm.
         live.onSmartAlarmFired = { [weak self] in
-            guard let self, self.behavior.smartAlarmEnabled else { return }
+            guard let self else { return }
             // PR #577 (iOS): mirror the strap's wake buzz to a local notification so a phone-in-pocket
-            // user still gets woken; no-op on macOS / when wrist alerts are off.
-            AppModel.postSmartAlarm()
-            self.applySmartAlarm()
+            // user still gets woken; no-op on macOS / when wrist alerts are off. A JohanUI alarm rings by itself.
+            if self.behavior.smartAlarmEnabled { AppModel.postSmartAlarm() }
+            if self.behavior.smartAlarmEnabled || Self.nextAppAlarmBuzz() != nil { self.applySmartAlarm() }
         }
         // Strap battery alerts (#368): low-battery warning + full-charge note. The notifier self-gates
         // on the user's setting and the OS authorization, and carries its own persisted once-per-
@@ -400,7 +400,8 @@ final class AppModel: ObservableObject {
         // `disarmPending` latches exactly that dropped write, so this stays a no-op for the many users who
         // never armed one (re-running unconditionally would put a DISABLE_ALARM on every connect).
         live.$connectSettled.dropFirst().sink { [weak self] _ in
-            guard let self, self.behavior.smartAlarmEnabled || self.ble.disarmPending else { return }
+            guard let self, self.behavior.smartAlarmEnabled || Self.nextAppAlarmBuzz() != nil
+                || self.ble.disarmPending else { return }
             self.applySmartAlarm()
         }.store(in: &hrCancellables)
         // The firmware alarm is a single absolute instant with no recurrence, and was re-armed ONLY on
@@ -1767,21 +1768,24 @@ final class AppModel: ObservableObject {
 
     func applySmartAlarm() {
         let overrides = WindDownNudge.perDayWakeOverrides
-        guard behavior.smartAlarmEnabled else {
-            ble.disableStrapAlarm()
-            Self.cancelSmartAlarmBackupNotification()
-            return
-        }
-        guard let next = Self.nextSmartAlarmDate(minutes: behavior.smartAlarmMinutes,
-                                                 weekdays: behavior.smartAlarmWeekdays,
-                                                 overrides: overrides) else {
-            // No enabled weekday in the next week (only possible from a corrupted set) , disarm rather
-            // than arm a misleading time the user never asked for.
+        // A nil smart date (off, or no enabled weekday in the next week from a corrupted set) arms no
+        // smart time the user never asked for.
+        let smartNext = behavior.smartAlarmEnabled
+            ? Self.nextSmartAlarmDate(minutes: behavior.smartAlarmMinutes,
+                                      weekdays: behavior.smartAlarmWeekdays,
+                                      overrides: overrides)
+            : nil
+        // The strap holds one alarm instant, so it gets whichever wake comes first.
+        guard let next = [smartNext, Self.nextAppAlarmBuzz()].compactMap({ $0 }).min() else {
             ble.disableStrapAlarm()
             Self.cancelSmartAlarmBackupNotification()
             return
         }
         ble.armStrapAlarm(at: next)
+        guard smartNext != nil else {
+            Self.cancelSmartAlarmBackupNotification()
+            return
+        }
         // Replace (remove + re-add by stable identifier) on every re-arm so the backup never stacks.
         // The log sink hops to the main actor because the auth check completes off-main and LiveState is
         // @MainActor - the same Task hop the importTraceSink uses.
@@ -1791,6 +1795,18 @@ final class AppModel: ObservableObject {
                                                   log: { [weak self] line in
                                                       Task { @MainActor in self?.live.append(log: line) }
                                                   })
+    }
+
+    /// The next JohanUI alarm with strap vibration on. It goes into the strap's own firmware alarm, because
+    /// iOS does not start NOOP when an AlarmKit alarm rings, so an in-app buzz misses a suspended app.
+    /// nil on macOS and before iOS 26.
+    static func nextAppAlarmBuzz() -> Date? {
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
+            return JohanAlarmStore.shared.alarms.filter(\.vibrateStrap).compactMap { $0.nextRing() }.min()
+        }
+        #endif
+        return nil
     }
 
     /// Compute the next fire date for the smart alarm, honouring the weekday selection.

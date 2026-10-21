@@ -25,6 +25,7 @@ struct JohanAlarm: Codable, Identifiable, Equatable {
         var parts = DateComponents()
         parts.hour = hour
         parts.minute = minute
+        parts.second = 0
         if weekdays.isEmpty {
             return calendar.nextDate(after: now, matching: parts, matchingPolicy: .nextTime)
         }
@@ -46,10 +47,10 @@ struct JohanAlarmRing: Codable, Equatable {
 /// The JohanUI alarm list, kept in step with AlarmKit (iOS 26), so alarms set in the app ring like the
 /// Clock app's: on the Lock Screen, in silent mode, with Snooze.
 ///
-/// iOS does not start the app when an alarm rings. The strap buzz therefore plays only when NOOP is
-/// running at that moment, in the foreground or kept in the background by the strap link: `observe`
-/// watches AlarmKit's updates and plays the saved `AlarmBuzzPattern` when one of these alarms starts to
-/// alert. `lastRing` records what came of it, so the screen can say so instead of promising it.
+/// iOS does not start the app when an alarm rings, so the strap's own firmware alarm carries the next
+/// alarm with strap vibration (`AppModel.applySmartAlarm`) and buzzes without the app. When NOOP is
+/// running at that moment, `observe` also plays the saved `AlarmBuzzPattern` as the alarm starts to
+/// alert; `lastRing` records what came of that.
 @available(iOS 26.0, *)
 @MainActor
 final class JohanAlarmStore: ObservableObject {
@@ -288,6 +289,8 @@ final class JohanAlarmStore: ObservableObject {
         if let data = try? JSONEncoder().encode(alarms) {
             UserDefaults.standard.set(data, forKey: Self.alarmsKey)
         }
+        // The strap's firmware alarm carries the next vibrating alarm, so it buzzes while NOOP is suspended.
+        AppModel.shared?.applySmartAlarm()
     }
 
     private static func access(_ state: AlarmManager.AuthorizationState) -> Access {

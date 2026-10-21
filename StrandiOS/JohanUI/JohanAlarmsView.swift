@@ -130,7 +130,7 @@ private struct JohanAlarmsList: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Strap vibration", systemImage: "alarm.waves.left.and.right")
                     .font(.system(.subheadline, weight: .semibold))
-                Text("Alarms with strap vibration on also play your Alarm Vibration pattern on the strap. iOS doesn't start the app for an alarm, so this works while the app is running, in the background too, with the strap connected.")
+                Text("The next alarm with strap vibration on is stored on the strap itself, so it vibrates even when the app is closed. When the app is running, your Alarm Vibration pattern plays as well.")
                     .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let ring = store.lastRing {
@@ -261,7 +261,7 @@ private struct JohanAlarmEditor: View {
                     Toggle("Strap vibration", isOn: $alarm.vibrateStrap)
                         .tint(JohanTheme.recoveryGreen)
                 } footer: {
-                    Text("Plays your Alarm Vibration pattern on the strap when the alarm rings, if the app is running and the strap is connected.")
+                    Text("The strap vibrates when the alarm rings, even with the app closed. It needs to have been connected since you set the alarm.")
                 }
                 if !isNew {
                     Section {
