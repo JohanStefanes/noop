@@ -12,6 +12,7 @@ struct JohanHomeView: View {
     @Environment(\.johanReloadTick) private var reloadTick
     @EnvironmentObject private var live: LiveState
     @EnvironmentObject private var profile: ProfileStore
+    @EnvironmentObject private var intelligence: IntelligenceEngine
     @StateObject private var model = JohanHomeModel()
     @Environment(\.johanSelectTab) private var selectTab
     @Environment(\.johanIntroPhase) private var introPhase
@@ -363,7 +364,12 @@ struct JohanHomeView: View {
     /// calibration has come. A past day shows the zone without advice for a day that is over.
     @ViewBuilder
     private func statusCard(_ s: JohanHomeModel.Snapshot, zone: JohanTheme.RecoveryZone?) -> some View {
-        if let nights = s.calibrationNights {
+        // A re-score is running and today has neither score yet: say so, rather than leaving two blank dials.
+        if s.isToday && s.recovery == nil && s.sleepPct == nil && intelligence.computing {
+            statusRow(icon: "arrow.triangle.2.circlepath", color: JohanTheme.sleepViolet,
+                      title: String(localized: "Calculating last night…"),
+                      detail: String(localized: "Sleep and recovery appear as soon as the calculation is done. Keeping NOOP open speeds it up."))
+        } else if let nights = s.calibrationNights {
             let total = model.calibrationLength
             let left = total - nights
             statusRow(icon: "hourglass", color: JohanTheme.strainBlue,
