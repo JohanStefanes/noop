@@ -10,6 +10,7 @@
 # Refuses to install unless the built bundle id is the one already on the phone, so an update never lands
 # in a new, empty data container. A push during a build is queued; the newest queued commit wins.
 # Log: ~/Library/Logs/noop-autobuild.log. Result: a macOS notification.
+# Release, not Debug: unoptimized analytics blow the iOS background CPU limit and the re-score never finishes.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,7 +54,7 @@ build_and_install() {
     cp "$REPO/Config/BundleIdSecrets.xcconfig" "$WT/Config/"
 
     (cd "$WT" && xcodegen generate --quiet)
-    if ! xcodebuild -project "$WT/Strand.xcodeproj" -scheme NOOPiOS -configuration Debug \
+    if ! xcodebuild -project "$WT/Strand.xcodeproj" -scheme NOOPiOS -configuration Release \
             -destination 'generic/platform=iOS' -derivedDataPath "$DD" -allowProvisioningUpdates \
             -quiet build; then
         log "build FAILED for $short"
@@ -61,7 +62,7 @@ build_and_install() {
         return 1
     fi
 
-    local app="$DD/Build/Products/Debug-iphoneos/NOOP.app" built
+    local app="$DD/Build/Products/Release-iphoneos/NOOP.app" built
     built="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
     if [ "$built" != "$BUNDLE_ID" ]; then
         log "bundle id is $built, expected $BUNDLE_ID; not installing"
