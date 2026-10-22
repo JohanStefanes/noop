@@ -1801,13 +1801,13 @@ final class AppModel: ObservableObject {
                                                   })
     }
 
-    /// The next JohanUI alarm with strap vibration on. It goes into the strap's own firmware alarm, because
+    /// The next JohanUI alarm with strap vibration on, or a pending oversleep check. It goes into the strap's own firmware alarm, because
     /// iOS does not start NOOP when an AlarmKit alarm rings, so an in-app buzz misses a suspended app.
     /// nil on macOS and before iOS 26.
     static func nextAppAlarmBuzz() -> Date? {
         #if os(iOS)
         if #available(iOS 26.0, *) {
-            return JohanAlarmStore.shared.alarms.filter(\.vibrateStrap).compactMap { $0.nextRing() }.min()
+            return JohanAlarmStore.shared.nextStrapWake()
         }
         #endif
         return nil
@@ -1892,6 +1892,10 @@ final class AppModel: ObservableObject {
             return
         }
         lastDoubleTapAt = now
+        #if os(iOS)
+        // A double-tap after a JohanUI alarm answers its oversleep check, and does nothing else.
+        if #available(iOS 26.0, *), JohanAlarmStore.shared.confirmAwake(via: "double-tap") { return }
+        #endif
         if let override = strapDoubleTapOverride {
             live.append(log: Self.stamped("Double-tap → Lift Log: next"))
             override()

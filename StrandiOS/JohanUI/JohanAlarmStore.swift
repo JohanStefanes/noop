@@ -18,6 +18,10 @@ struct JohanAlarm: Codable, Identifiable, Equatable {
     var enabled = true
     /// Also play the Alarm Vibration pattern on the strap when it rings.
     var vibrateStrap = true
+    /// Oversleep check: this many minutes after the alarm rings, the strap vibrates until the wearer
+    /// double-taps it, unless they have double-tapped or opened NOOP by then. nil is off. Optional, so
+    /// alarms saved before it existed still decode.
+    var oversleepMinutes: Int?
 
     /// The next time it rings after `now`, or nil when it is off.
     func nextRing(after now: Date = Date(), calendar: Calendar = .current) -> Date? {
@@ -35,6 +39,13 @@ struct JohanAlarm: Codable, Identifiable, Equatable {
             return calendar.nextDate(after: now, matching: p, matchingPolicy: .nextTime)
         }.min()
     }
+}
+
+/// An alarm rang with the oversleep check on, and the wearer has not confirmed being awake yet.
+struct JohanOversleepCheck: Codable, Equatable {
+    let alarmID: UUID
+    /// When the strap starts vibrating if nobody has confirmed by then.
+    let due: Date
 }
 
 /// What happened on the strap the last time a JohanUI alarm rang.
@@ -61,6 +72,7 @@ final class JohanAlarmStore: ObservableObject {
     @Published private(set) var alarms: [JohanAlarm] = []
     @Published private(set) var access: Access = .notDetermined
     @Published private(set) var lastRing: JohanAlarmRing?
+    @Published private(set) var oversleepCheck: JohanOversleepCheck?
     /// The last scheduling error, for the screen to show; cleared by the next successful change.
     @Published private(set) var problem: String?
 
@@ -70,6 +82,9 @@ final class JohanAlarmStore: ObservableObject {
     private let manager = AlarmManager.shared
     private static let alarmsKey = "johan.alarms"
     private static let lastRingKey = "johan.alarms.lastRing"
+    private static let oversleepKey = "johan.alarms.oversleepCheck"
+    /// The choices the editor offers for the oversleep check, in minutes.
+    static let oversleepRange = 10...30
     /// Alarms seen alerting in the last update, so a strap buzz plays once per ring, not per update.
     private var alerting: Set<UUID> = []
     /// Alarms being scheduled right now, which an update may not list yet and must not switch off.
@@ -83,6 +98,11 @@ final class JohanAlarmStore: ObservableObject {
         }
         if let data = UserDefaults.standard.data(forKey: Self.lastRingKey) {
             lastRing = try? JSONDecoder().decode(JohanAlarmRing.self, from: data)
+        }
+        if let data = UserDefaults.standard.data(forKey: Self.oversleepKey),
+           let check = try? JSONDecoder().decode(JohanOversleepCheck.self, from: data),
+           Date().timeIntervalSince(check.due) < Self.maxBuzzSeconds {
+            oversleepCheck = check
         }
         access = Self.access(manager.authorizationState)
     }
@@ -106,6 +126,14 @@ final class JohanAlarmStore: ObservableObject {
     /// The alarms sorted as the Clock app sorts them: by time of day.
     var sorted: [JohanAlarm] {
         alarms.sorted { ($0.hour, $0.minute) < ($1.hour, $1.minute) }
+    }
+
+    /// The next instant the strap's firmware alarm should hold: the next alarm with strap vibration, or a
+    /// pending oversleep check, whichever is first.
+    func nextStrapWake(after now: Date = Date()) -> Date? {
+        let ring = alarms.filter(\.vibrateStrap).compactMap { $0.nextRing(after: now) }.min()
+        let check = oversleepCheck.map(\.due).flatMap { $0 > now ? $0 : nil }
+        return [ring, check].compactMap { $0 }.min()
     }
 
     /// The enabled alarm that rings next, with its time.
@@ -260,7 +288,9 @@ final class JohanAlarmStore: ObservableObject {
     private func reconcile(_ scheduled: [Alarm]) {
         let nowAlerting = Set(scheduled.filter { $0.state == .alerting }.map(\.id))
         for id in nowAlerting.subtracting(alerting) {
-            if let alarm = alarms.first(where: { $0.id == id }), alarm.vibrateStrap { buzzStrap(while: id) }
+            guard let alarm = alarms.first(where: { $0.id == id }) else { continue }
+            if let minutes = alarm.oversleepMinutes, oversleepCheck?.alarmID != id { startOversleepCheck(alarm, minutes: minutes) }
+            if alarm.vibrateStrap { buzzStrap(recordRing: true) { [weak self] in self?.isAlerting(id) == true } }
         }
         alerting = nowAlerting
 
@@ -276,15 +306,16 @@ final class JohanAlarmStore: ObservableObject {
 
     /// How long the strap keeps buzzing for one ring at most, as long as the Clock app's alarm rings.
     static let maxBuzzSeconds: TimeInterval = 15 * 60
-    /// The alarm whose ring the strap is buzzing for, so a second update doesn't start a second loop.
-    private var buzzing: UUID?
+    /// True while a buzz loop runs, so a second update doesn't start a second loop.
+    private var buzzing = false
 
-    /// Repeat the Alarm Vibration pattern until the alarm stops alerting (Stop or Snooze) or
-    /// `maxBuzzSeconds` pass. Holds background time, because the strap's own alarm event may be the only
-    /// thing that woke NOOP; past that, each BLE write's reply is what keeps the process running.
-    private func buzzStrap(while id: UUID) {
-        guard buzzing == nil else { return }
-        buzzing = id
+    /// Repeat the Alarm Vibration pattern while `keepGoing` holds (the alarm still alerting, or the
+    /// oversleep check unanswered), for `maxBuzzSeconds` at most. Holds background time, because the
+    /// strap's own alarm event may be the only thing that woke NOOP; past that, each BLE write's reply is
+    /// what keeps the process running.
+    private func buzzStrap(recordRing: Bool, while keepGoing: @escaping @MainActor () -> Bool) {
+        guard !buzzing else { return }
+        buzzing = true
         let application = UIApplication.shared
         var taskID: UIBackgroundTaskIdentifier = .invalid
         taskID = application.beginBackgroundTask(withName: "johan-alarm-buzz") {
@@ -297,12 +328,14 @@ final class JohanAlarmStore: ObservableObject {
             repeat {
                 if await AppModel.buzzForAlarmFromShortcut() == .sent { sent = true }
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-            } while isAlerting(id) && Date().timeIntervalSince(start) < Self.maxBuzzSeconds
-            buzzing = nil
-            let ring = JohanAlarmRing(date: start, sent: sent)
-            lastRing = ring
-            if let data = try? JSONEncoder().encode(ring) {
-                UserDefaults.standard.set(data, forKey: Self.lastRingKey)
+            } while keepGoing() && Date().timeIntervalSince(start) < Self.maxBuzzSeconds
+            buzzing = false
+            if recordRing {
+                let ring = JohanAlarmRing(date: start, sent: sent)
+                lastRing = ring
+                if let data = try? JSONEncoder().encode(ring) {
+                    UserDefaults.standard.set(data, forKey: Self.lastRingKey)
+                }
             }
             if taskID != .invalid {
                 application.endBackgroundTask(taskID)
@@ -319,11 +352,65 @@ final class JohanAlarmStore: ObservableObject {
     /// The strap reported its firmware alarm fired, which wakes NOOP even while suspended. AlarmKit may mark
     /// the matching alarm alerting a moment later, so look for a few seconds and start the buzz loop.
     func strapAlarmFired() async {
+        if let check = activeCheck(), Date() >= check.due.addingTimeInterval(-90) {
+            AppModel.shared?.live.append(log: "Oversleep check: not confirmed awake, vibrating until a double-tap")
+            buzzStrap(recordRing: false) { [weak self] in self?.oversleepCheck == check }
+            // Cleared after the loop's cap even unanswered, so a strap left on the nightstand stops.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.maxBuzzSeconds * 1_000_000_000))
+                if self?.oversleepCheck == check { self?.setOversleepCheck(nil) }
+            }
+            return
+        }
         for _ in 0..<5 {
             if let scheduled = try? manager.alarms { reconcile(scheduled) }
-            if buzzing != nil { return }
+            if buzzing { return }
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
+    }
+
+    // MARK: Oversleep check
+
+    /// The alarm started ringing: the check is due `minutes` after its set time, not after whenever NOOP
+    /// noticed, so a late wake of the app doesn't push it back.
+    private func startOversleepCheck(_ alarm: JohanAlarm, minutes: Int) {
+        let now = Date()
+        let rang = Calendar.current.date(bySettingHour: alarm.hour, minute: alarm.minute, second: 0, of: now)
+            .flatMap { $0 <= now ? $0 : nil } ?? now
+        setOversleepCheck(JohanOversleepCheck(alarmID: alarm.id, due: rang.addingTimeInterval(TimeInterval(minutes * 60))))
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        AppModel.shared?.live.append(log: "Oversleep check: double-tap the strap or open NOOP by \(fmt.string(from: rang.addingTimeInterval(TimeInterval(minutes * 60))))")
+    }
+
+    /// The wearer showed they are awake (`via` says how, for the log). Clears a pending check and stops
+    /// its vibration; returns whether there was one, so a double-tap that answered it runs nothing else.
+    @discardableResult
+    func confirmAwake(via: String) -> Bool {
+        guard activeCheck() != nil else {
+            if oversleepCheck != nil { setOversleepCheck(nil) }
+            return false
+        }
+        AppModel.shared?.live.append(log: "Oversleep check: awake confirmed by \(via)")
+        setOversleepCheck(nil)
+        return true
+    }
+
+    /// The pending check, unless it lapsed (the strap never reported its alarm, say), so a stale check
+    /// can neither swallow tomorrow's double-tap nor start a buzz loop at the next alarm.
+    private func activeCheck(now: Date = Date()) -> JohanOversleepCheck? {
+        oversleepCheck.flatMap { now.timeIntervalSince($0.due) < Self.maxBuzzSeconds ? $0 : nil }
+    }
+
+    private func setOversleepCheck(_ check: JohanOversleepCheck?) {
+        oversleepCheck = check
+        if let check, let data = try? JSONEncoder().encode(check) {
+            UserDefaults.standard.set(data, forKey: Self.oversleepKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.oversleepKey)
+        }
+        // Moves the strap's firmware alarm to the check, or off it once answered.
+        AppModel.shared?.applySmartAlarm()
     }
 
     private func persist() {

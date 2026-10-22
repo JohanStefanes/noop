@@ -382,6 +382,8 @@ struct StrandiOSApp: App {
                 liveActivity.appBecameActive()
                 // End a "Connecting…" sync island whose sync never came, rather than leave it greyed.
                 SyncLiveActivityController.shared.reconcile(live: model.live)
+                // Opening NOOP after a JohanUI alarm counts as awake for its oversleep check.
+                if #available(iOS 26.0, *) { JohanAlarmStore.shared.confirmAwake(via: "opening NOOP") }
                 // Re-arm the strap's smart alarm on foreground: the firmware alarm is a single instant
                 // and iOS can't re-arm it while suspended, so it would otherwise fire once and stop.
                 model.applySmartAlarm()

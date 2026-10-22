@@ -263,6 +263,20 @@ private struct JohanAlarmEditor: View {
                 } footer: {
                     Text("The strap vibrates when the alarm rings, even with the app closed. It needs to have been connected since you set the alarm.")
                 }
+                Section {
+                    Toggle("Oversleep check", isOn: Binding(
+                        get: { alarm.oversleepMinutes != nil },
+                        set: { alarm.oversleepMinutes = $0 ? 20 : nil }))
+                        .tint(JohanTheme.recoveryGreen)
+                    if let minutes = alarm.oversleepMinutes {
+                        Stepper(value: Binding(get: { minutes }, set: { alarm.oversleepMinutes = $0 }),
+                                in: JohanAlarmStore.oversleepRange, step: 5) {
+                            Text("Check after \(minutes) min")
+                        }
+                    }
+                } footer: {
+                    Text("After the alarm, double-tap the strap or open NOOP to show you're up. If you haven't by then, the strap vibrates until you double-tap it.")
+                }
                 if !isNew {
                     Section {
                         Button("Delete Alarm", role: .destructive) {
