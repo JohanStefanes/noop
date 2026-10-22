@@ -260,7 +260,7 @@ final class JohanAlarmStore: ObservableObject {
     private func reconcile(_ scheduled: [Alarm]) {
         let nowAlerting = Set(scheduled.filter { $0.state == .alerting }.map(\.id))
         for id in nowAlerting.subtracting(alerting) {
-            if let alarm = alarms.first(where: { $0.id == id }), alarm.vibrateStrap { buzzStrap() }
+            if let alarm = alarms.first(where: { $0.id == id }), alarm.vibrateStrap { buzzStrap(while: id) }
         }
         alerting = nowAlerting
 
@@ -274,14 +274,55 @@ final class JohanAlarmStore: ObservableObject {
         if changed { persist() }
     }
 
-    private func buzzStrap() {
+    /// How long the strap keeps buzzing for one ring at most, as long as the Clock app's alarm rings.
+    static let maxBuzzSeconds: TimeInterval = 15 * 60
+    /// The alarm whose ring the strap is buzzing for, so a second update doesn't start a second loop.
+    private var buzzing: UUID?
+
+    /// Repeat the Alarm Vibration pattern until the alarm stops alerting (Stop or Snooze) or
+    /// `maxBuzzSeconds` pass. Holds background time, because the strap's own alarm event may be the only
+    /// thing that woke NOOP; past that, each BLE write's reply is what keeps the process running.
+    private func buzzStrap(while id: UUID) {
+        guard buzzing == nil else { return }
+        buzzing = id
+        let application = UIApplication.shared
+        var taskID: UIBackgroundTaskIdentifier = .invalid
+        taskID = application.beginBackgroundTask(withName: "johan-alarm-buzz") {
+            application.endBackgroundTask(taskID)
+            taskID = .invalid
+        }
         Task {
-            let outcome = await AppModel.buzzForAlarmFromShortcut()
-            let ring = JohanAlarmRing(date: Date(), sent: outcome == .sent)
+            let start = Date()
+            var sent = false
+            repeat {
+                if await AppModel.buzzForAlarmFromShortcut() == .sent { sent = true }
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            } while isAlerting(id) && Date().timeIntervalSince(start) < Self.maxBuzzSeconds
+            buzzing = nil
+            let ring = JohanAlarmRing(date: start, sent: sent)
             lastRing = ring
             if let data = try? JSONEncoder().encode(ring) {
                 UserDefaults.standard.set(data, forKey: Self.lastRingKey)
             }
+            if taskID != .invalid {
+                application.endBackgroundTask(taskID)
+                taskID = .invalid
+            }
+        }
+    }
+
+    /// Asked of AlarmKit directly, not of the last update, which a suspended process may never have seen.
+    private func isAlerting(_ id: UUID) -> Bool {
+        (try? manager.alarms)?.contains { $0.id == id && $0.state == .alerting } ?? false
+    }
+
+    /// The strap reported its firmware alarm fired, which wakes NOOP even while suspended. AlarmKit may mark
+    /// the matching alarm alerting a moment later, so look for a few seconds and start the buzz loop.
+    func strapAlarmFired() async {
+        for _ in 0..<5 {
+            if let scheduled = try? manager.alarms { reconcile(scheduled) }
+            if buzzing != nil { return }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
     }
 

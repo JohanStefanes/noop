@@ -130,7 +130,7 @@ private struct JohanAlarmsList: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Strap vibration", systemImage: "alarm.waves.left.and.right")
                     .font(.system(.subheadline, weight: .semibold))
-                Text("The next alarm with strap vibration on is stored on the strap itself, so it vibrates even when the app is closed. When the app is running, your Alarm Vibration pattern plays as well.")
+                Text("The next alarm with strap vibration on is stored on the strap itself, so it vibrates even when the app is closed. When the app is running, your Alarm Vibration pattern then repeats until you stop or snooze the alarm.")
                     .font(JohanTheme.Fonts.body).foregroundStyle(JohanTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let ring = store.lastRing {

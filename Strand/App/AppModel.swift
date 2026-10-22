@@ -329,6 +329,10 @@ final class AppModel: ObservableObject {
             // user still gets woken; no-op on macOS / when wrist alerts are off. A JohanUI alarm rings by itself.
             if self.behavior.smartAlarmEnabled { AppModel.postSmartAlarm() }
             if self.behavior.smartAlarmEnabled || Self.nextAppAlarmBuzz() != nil { self.applySmartAlarm() }
+            #if os(iOS)
+            // Keeps the strap buzzing until a ringing JohanUI alarm is stopped.
+            if #available(iOS 26.0, *) { Task { await JohanAlarmStore.shared.strapAlarmFired() } }
+            #endif
         }
         // Strap battery alerts (#368): low-battery warning + full-charge note. The notifier self-gates
         // on the user's setting and the OS authorization, and carries its own persisted once-per-
