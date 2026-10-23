@@ -98,12 +98,28 @@ struct AlarmBuzzIntent: AppIntent {
         let outcome = await AppModel.buzzForAlarmFromShortcut()
         // The alarm screen shows this, the only sign it gets that the automation exists and runs.
         AlarmBuzzRun.record(sent: outcome == .sent)
+        // Keeps buzzing after this returns, until "Stop Strap Buzz for Alarm" runs.
+        if #available(iOS 26.0, *) { JohanAlarmStore.shared.clockAlarmWentOff(firstSent: outcome == .sent) }
         switch outcome {
         // Names only what NOOP did: the writes went out on a ready link. Whether the motor ran is not
         // observable from here.
         case .sent:              return .result(dialog: "Sent the alarm buzz to your strap.")
         case .strapNotConnected: return .result(dialog: "Your strap isn't connected to NOOP, so it couldn't buzz.")
         }
+    }
+}
+
+/// End the buzz "Buzz Strap for Alarm" keeps playing, for Shortcuts automations "When an alarm is stopped"
+/// and "When an alarm is snoozed". Without it the strap buzzes on for `JohanAlarmStore.maxBuzzSeconds`.
+struct AlarmBuzzStopIntent: AppIntent {
+    static var title: LocalizedStringResource = "Stop Strap Buzz for Alarm"
+    static var description = IntentDescription("Stop the strap vibration an alarm started. Add it to Shortcuts automations that run when an iPhone alarm is stopped or snoozed.")
+    static var openAppWhenRun = false
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if #available(iOS 26.0, *) { JohanAlarmStore.shared.clockAlarmStopped() }
+        return .result()
     }
 }
 

@@ -18,6 +18,7 @@ struct JohanAlarmLinkView: View {
         String(localized: "Set it to run when an alarm goes off, for any alarm or just one."),
         String(localized: "Choose “Run Immediately” so it doesn't ask first."),
         String(localized: "Add NOOP's “Buzz Strap for Alarm” action and tap “Done”."),
+        String(localized: "Add two more alarm automations, for “Is Stopped” and “Is Snoozed”, each with NOOP's “Stop Strap Buzz for Alarm” action, so the strap stops with the alarm."),
     ]
 
     var body: some View {
@@ -52,6 +53,7 @@ struct JohanAlarmLinkView: View {
                 }
             }
             patternSection
+            if #available(iOS 26.0, *) { JohanClockOversleepSection() }
             JohanOverline(String(localized: "Test"))
             JohanCard {
                 VStack(alignment: .leading, spacing: 10) {
@@ -80,7 +82,7 @@ struct JohanAlarmLinkView: View {
             JohanCard {
                 VStack(alignment: .leading, spacing: 8) {
                     note(String(localized: "The strap has to be connected to NOOP when the alarm goes off. If it isn't, it doesn't vibrate, and the shortcut says so."))
-                    note(String(localized: "The pattern plays once. It is not a continuous alarm."))
+                    note(String(localized: "The pattern repeats until the alarm is stopped or snoozed, or you double-tap the strap, for 15 minutes at most."))
                     note(String(localized: "Your iPhone alarm still rings as usual. The strap adds to it, it doesn't replace it."))
                 }
             }
@@ -252,5 +254,33 @@ struct JohanAlarmLinkView: View {
 
     @MainActor
     private func runTest() async { await play(pattern) }
+}
+
+/// The oversleep check after a Clock app alarm: unless the wearer double-taps the strap or opens NOOP within
+/// the chosen minutes, the strap vibrates until a double-tap.
+@available(iOS 26.0, *)
+private struct JohanClockOversleepSection: View {
+    @ObservedObject private var store = JohanAlarmStore.shared
+
+    var body: some View {
+        JohanOverline(String(localized: "If you oversleep"))
+        JohanCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: Binding(get: { store.clockOversleepMinutes != nil },
+                                     set: { store.clockOversleepMinutes = $0 ? 20 : nil })) {
+                    Text("Oversleep check").font(.system(.subheadline))
+                }
+                .tint(JohanTheme.strainBlue)
+                if let minutes = store.clockOversleepMinutes {
+                    Stepper(value: Binding(get: { minutes }, set: { store.clockOversleepMinutes = $0 }),
+                            in: JohanAlarmStore.oversleepRange, step: 5) {
+                        Text("Check after \(minutes) min").font(.system(.subheadline))
+                    }
+                }
+                Text("After the alarm, double-tap the strap or open NOOP to show you're up. If you haven't by then, the strap vibrates until you double-tap it.")
+                    .font(JohanTheme.Fonts.caption).foregroundStyle(JohanTheme.textSecondary)
+            }
+        }
+    }
 }
 #endif

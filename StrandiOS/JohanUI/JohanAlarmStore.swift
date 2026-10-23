@@ -43,7 +43,8 @@ struct JohanAlarm: Codable, Identifiable, Equatable {
 
 /// An alarm rang with the oversleep check on, and the wearer has not confirmed being awake yet.
 struct JohanOversleepCheck: Codable, Equatable {
-    let alarmID: UUID
+    /// The JohanUI alarm that started it; nil for a Clock app alarm.
+    let alarmID: UUID?
     /// When the strap starts vibrating if nobody has confirmed by then.
     let due: Date
 }
@@ -313,7 +314,7 @@ final class JohanAlarmStore: ObservableObject {
     /// oversleep check unanswered), for `maxBuzzSeconds` at most. Holds background time, because the
     /// strap's own alarm event may be the only thing that woke NOOP; past that, each BLE write's reply is
     /// what keeps the process running.
-    private func buzzStrap(recordRing: Bool, while keepGoing: @escaping @MainActor () -> Bool) {
+    private func buzzStrap(recordRing: Bool, pauseFirst: Bool = false, while keepGoing: @escaping @MainActor () -> Bool) {
         guard !buzzing else { return }
         buzzing = true
         let application = UIApplication.shared
@@ -325,8 +326,10 @@ final class JohanAlarmStore: ObservableObject {
         Task {
             let start = Date()
             var sent = false
+            var skip = pauseFirst
             repeat {
-                if await AppModel.buzzForAlarmFromShortcut() == .sent { sent = true }
+                if !skip, await AppModel.buzzForAlarmFromShortcut() == .sent { sent = true }
+                skip = false
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
             } while keepGoing() && Date().timeIntervalSince(start) < Self.maxBuzzSeconds
             buzzing = false
@@ -369,6 +372,42 @@ final class JohanAlarmStore: ObservableObject {
         }
     }
 
+    // MARK: Clock app alarms
+
+    /// A Clock app alarm is ringing: its "goes off" automation ran and its "stopped" or "snoozed" one has
+    /// not yet. iOS shows apps nothing else of those alarms, so these two automations are all NOOP knows.
+    private var clockAlarmRinging = false
+    private static let clockOversleepKey = "johan.clockAlarm.oversleepMinutes"
+
+    /// The oversleep check after a Clock app alarm, in minutes; nil is off.
+    var clockOversleepMinutes: Int? {
+        get { UserDefaults.standard.object(forKey: Self.clockOversleepKey) as? Int }
+        set {
+            objectWillChange.send()
+            UserDefaults.standard.set(newValue, forKey: Self.clockOversleepKey)
+        }
+    }
+
+    /// "Buzz Strap for Alarm" ran and has played the pattern once (`firstSent`). Keeps buzzing until the
+    /// alarm is stopped or snoozed, a double-tap, or `maxBuzzSeconds`, and starts the oversleep check.
+    func clockAlarmWentOff(firstSent: Bool) {
+        clockAlarmRinging = true
+        if let minutes = clockOversleepMinutes, activeCheck() == nil {
+            let due = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            setOversleepCheck(JohanOversleepCheck(alarmID: nil, due: due))
+            let fmt = DateFormatter()
+            fmt.dateFormat = "HH:mm"
+            AppModel.shared?.live.append(log: "Oversleep check: double-tap the strap or open NOOP by \(fmt.string(from: due))")
+        }
+        buzzStrap(recordRing: false, pauseFirst: firstSent) { [weak self] in self?.clockAlarmRinging == true }
+    }
+
+    /// "Stop Strap Buzz for Alarm" ran: the Clock alarm was stopped or snoozed. Not proof of being awake,
+    /// so the oversleep check stays.
+    func clockAlarmStopped() {
+        clockAlarmRinging = false
+    }
+
     // MARK: Oversleep check
 
     /// The alarm started ringing: the check is due `minutes` after its set time, not after whenever NOOP
@@ -387,9 +426,12 @@ final class JohanAlarmStore: ObservableObject {
     /// its vibration; returns whether there was one, so a double-tap that answered it runs nothing else.
     @discardableResult
     func confirmAwake(via: String) -> Bool {
+        // A double-tap while a Clock alarm buzzes means up: the strap stops with it.
+        let wasRinging = clockAlarmRinging
+        clockAlarmRinging = false
         guard activeCheck() != nil else {
             if oversleepCheck != nil { setOversleepCheck(nil) }
-            return false
+            return wasRinging
         }
         AppModel.shared?.live.append(log: "Oversleep check: awake confirmed by \(via)")
         setOversleepCheck(nil)
